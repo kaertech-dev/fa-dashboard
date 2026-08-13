@@ -32,7 +32,10 @@
   font-size: .85rem;
 }
 #rework-text-display {
-  border: 1px solid #e0c200;
+  border: 1px solid #16a34a;
   border-radius: 6px;
   line-height: 1.55;
+  min-height: 160px;
+  max-height: 260px;
+  overflow-y: auto;
 }

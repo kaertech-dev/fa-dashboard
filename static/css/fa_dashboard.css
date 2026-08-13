@@ -300,8 +300,11 @@ select:disabled { opacity: .5; cursor: not-allowed; }
   display: flex; align-items: center; justify-content: center; z-index: 200;
 }
 .modal-card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: 12px; padding: 28px 28px 24px; width: 360px;
+  background: var(--surface); 
+  border: 1px solid var(--border);
+  border-radius: 12px; 
+  padding: 28px 28px 24px; 
+  width: 790px;
   box-shadow: 0 12px 40px rgba(0,0,0,.18);
 }
 .modal-header {
@@ -314,6 +317,225 @@ select:disabled { opacity: .5; cursor: not-allowed; }
   cursor: pointer; padding: 2px 6px; border-radius: 4px;
 }
 .modal-close:hover { color: var(--danger); }
+.kpi-clickable { cursor: pointer; transition: transform .12s ease, box-shadow .12s ease; }
+.kpi-clickable:hover { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(0,0,0,.08); }
+.kpi-clickable.active { outline: 2px solid var(--accent3, #58a6ff); outline-offset: 2px; }
+
+/* Click feedback: card lifts/pops in place, no page scroll involved.
+   z-index bump keeps it visually above neighboring cards while it floats. */
+.kpi-clickable.kpi-floating {
+  animation: kpiFloat .45s ease;
+  z-index: 5;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   FAILURE RECORD DETAIL MODAL
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.failure-detail-backdrop {
+  z-index: 5000;
+  backdrop-filter: blur(4px);
+  background: rgba(15, 23, 42, .62);
+}
+
+.failure-detail-modal {
+  width: min(920px, calc(100vw - 32px));
+  max-width: 920px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  padding: 0;
+  border-radius: 14px;
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, .30),
+    0 0 0 1px rgba(255,255,255,.08);
+  animation: failureModalFloat .20s ease-out;
+}
+
+@keyframes failureModalFloat {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.failure-detail-modal .modal-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--card, #fff);
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+}
+
+.failure-detail-subtitle {
+  color: var(--muted, #6b7280);
+  font-size: .75rem;
+  margin-top: 3px;
+}
+
+.failure-focus {
+  margin: 18px 22px 6px;
+  padding: 18px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border-radius: 10px;
+  background:
+    linear-gradient(
+      135deg,
+      rgba(247,129,102,.13),
+      rgba(247,129,102,.04)
+    );
+  border: 1px solid rgba(247,129,102,.25);
+}
+
+.failure-focus-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.failure-focus-label {
+  color: var(--muted, #6b7280);
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+}
+
+.failure-focus-serial {
+  color: var(--accent3, #f78166);
+  font-family: Consolas, monospace;
+  font-size: 1.25rem;
+  font-weight: 800;
+}
+
+.failure-focus-status {
+  font-size: .78rem;
+  font-weight: 800;
+  letter-spacing: .04em;
+  padding: 7px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.failure-detail-section {
+  margin: 16px 22px;
+  padding: 16px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  background: var(--card, #fff);
+}
+
+.failure-analysis-focus {
+  border-color: rgba(247,129,102,.30);
+  box-shadow: inset 3px 0 0 #f78166;
+}
+
+.failure-detail-section-title {
+  font-size: .76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--muted, #6b7280);
+  margin-bottom: 13px;
+}
+
+.failure-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+}
+
+.failure-detail-item {
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 7px;
+  background: rgba(148,163,184,.06);
+}
+
+.failure-detail-item span {
+  display: block;
+  color: var(--muted, #6b7280);
+  font-size: .68rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: .025em;
+}
+
+.failure-detail-item strong {
+  display: block;
+  color: var(--text, #111827);
+  font-size: .83rem;
+  font-weight: 600;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.failure-detail-wide {
+  grid-column: 1 / -1;
+}
+
+.failure-detail-footer {
+  position: sticky;
+  bottom: 0;
+  padding: 14px 22px;
+  display: flex;
+  justify-content: flex-end;
+  background: var(--card, #fff);
+  border-top: 1px solid var(--border, #e5e7eb);
+}
+
+/* Clickable table rows */
+#table-body tr {
+  cursor: pointer;
+  transition:
+    background-color .12s ease,
+    box-shadow .12s ease;
+}
+
+#table-body tr:hover {
+  background: rgba(247,129,102,.075);
+  box-shadow: inset 3px 0 0 #f78166;
+}
+
+#table-body tr:active {
+  background: rgba(247,129,102,.12);
+}
+
+/* Small screen */
+@media (max-width: 640px) {
+  .failure-detail-modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
+  .failure-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .failure-detail-wide {
+    grid-column: auto;
+  }
+
+  .failure-focus {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@keyframes kpiFloat {
+  0%   { transform: translateY(0) scale(1);       box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  35%  { transform: translateY(-10px) scale(1.035); box-shadow: 0 14px 28px rgba(0,0,0,.16); }
+  65%  { transform: translateY(-4px) scale(1.012);  box-shadow: 0 8px 18px rgba(0,0,0,.10); }
+  100% { transform: translateY(0) scale(1);        box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+}
 
 @media (max-width: 900px) {
   .endorse-layout { grid-template-columns: 1fr; }

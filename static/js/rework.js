@@ -83,14 +83,23 @@ async function scanReworkSerial() {
     const r = json.row;
     document.getElementById('rework-datetime').value = formatReworkDate(r.faendorse_datetime);
     document.getElementById('rework-text-display').textContent =
-`FA FINDINGS:
+    `UUT DETAILS:
+    Product: ${r.product || '–'}
+    Model: ${r.model || '–'}
+    PO: ${r.po_num || '–'}
+    Station: ${r.station || '–'}
+    Test Failure: ${r.test_failure || '–'}
+    Endorsed By: ${r.prod_endorser || '–'}
+    Endorsement Date & Time: ${formatReturnDate(r.faendorse_datetime)}
 
-Failure Cause: ${r.failure_cause || '–'}
-Affected Component: ${r.affected_comp || '–'}
-Proposed Action: ${r.proposed_action || '–'}
-Defect Category: ${r.defect_cat || '–'}
-FA Class: ${r.fa_class || '–'}
-FA PIC: ${r.fa_pic || '–'}`;
+FA FINDINGS:
+
+    Failure Cause: ${r.failure_cause || '–'}
+    Affected Component: ${r.affected_comp || '–'}
+    Proposed Action: ${r.proposed_action || '–'}
+    Defect Category: ${r.defect_cat || '–'}
+    FA Class: ${r.fa_class || '–'}
+    FA PIC: ${r.fa_pic || '–'}`;
 
     document.getElementById('rework-pic').value = r.repairer || '';
     ensureReworkOption('rework-action-taken', r.action_taken);

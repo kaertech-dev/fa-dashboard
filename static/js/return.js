@@ -31,11 +31,16 @@ function formatReturnDate(v) {
   return String(v).replace('T', ' ').slice(0, 19);
 }
 
+
 // ── SERIAL SCAN ────────────────────────────────────────────────────────────────
 document.getElementById('return-serial').addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); scanReturnSerial(); }
 });
+document.getElementById('rework-serial').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); scanReworkSerial(); }
+});
 document.getElementById('return-serial').addEventListener('blur', scanReturnSerial);
+document.getElementById('rework-serial').addEventListener('blur', scanReworkSerial);
 
 async function scanReturnSerial() {
   const err    = document.getElementById('return-error');
@@ -48,6 +53,8 @@ async function scanReturnSerial() {
     const json = await res.json();
     if (!json.ok) {
       document.getElementById('return-text-display').textContent = 'Serial number not found.';
+      return;
+    } else if (!json.row) {
       document.getElementById('return-datetime').value = '';
       err.textContent = json.error || 'Serial number not found.';
       return;
@@ -55,13 +62,27 @@ async function scanReturnSerial() {
     const r = json.row;
     document.getElementById('return-datetime').value = formatReturnDate(r.repaired_datetime || r.faendorse_datetime);
     document.getElementById('return-text-display').textContent =
-`REPAIR SUMMARY:
+    `UUT DETAILS:
+    Product: ${r.product || '–'}
+    Model: ${r.model || '–'}
+    PO: ${r.po_num || '–'}
+    Station: ${r.station || '–'}
+    Test Failure: ${r.test_failure || '–'}
+    Endorsed By: ${r.prod_endorser || '–'}
+    Endorsement Date & Time: ${formatReturnDate(r.faendorse_datetime)}
 
-Failure Cause: ${r.failure_cause || '–'}
-Affected Component: ${r.affected_comp || '–'}
-Action Taken: ${r.action_taken || '–'}
-Repairer: ${r.repairer || '–'}
-Repaired Date: ${formatReturnDate(r.repaired_datetime)}`;
+FA FINDINGS:
+    Failure Cause: ${r.failure_cause || '–'}
+    Affected Component: ${r.affected_comp || '–'}
+    Proposed Action: ${r.proposed_action || '–'}
+    Defect Category: ${r.defect_cat || '–'}
+    FA Class: ${r.fa_class || '–'}
+    FA PIC: ${r.fa_pic || '–'}
+
+REPAIR SUMMARY:
+    Action Taken: ${r.action_taken || '–'}
+    Repairer: ${r.repairer || '–'}
+    Repaired Date: ${formatReturnDate(r.repaired_datetime)}`;
 
     document.getElementById('return-pic').value = r.repairer || '';
   } catch (e) {

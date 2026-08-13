@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Environment files (do NOT commit secrets)
+.env
+.env.local
+
+# Editor settings
+.vscode/
+
+# Distribution/build
+dist/
+build/

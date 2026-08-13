@@ -6,18 +6,29 @@ const COLORS = ['#f78166','#79c0ff','#56d364','#d29922','#bc8cff','#58a6ff','#ff
 
 // ── UTILS ─────────────────────────────────────────────────────────────────────
 const loader = on => document.getElementById('loader').classList.toggle('on', on);
-const fmt    = v  => (v == null || v === '') ? '–' : v;
+function escapeHtml(v) {
+  if (v == null || v === '') return '–';
+
+  return String(v)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+const fmt = escapeHtml;
 
 function statusLabel(v) {
-  if (v == 1) return 'Easy';
-  if (v == 2) return 'Intermediate';
-  if (v == 4) return 'Hard';
+  if (v == 1) return 'OPEN';
+  if (v == 2) return 'WIP';
+  if (v == 4) return 'CLOSED';
   return '';
 }
 function statusTag(v) {
-  if (v == 1) return `<span class="tag tag-open">Easy</span>`;
-  if (v == 2) return `<span class="tag tag-closed">Intermediate</span>`;
-  if (v == 4) return `<span class="tag tag-wip">Hard</span>`;
+  if (v == 1) return `<span class="tag tag-open">OPEN</span>`;
+  if (v == 2) return `<span class="tag tag-wip">WIP</span>`;
+  if (v == 4) return `<span class="tag tag-closed">CLOSED</span>`;
   return `<span class="tag" style="opacity:.4">–</span>`;
 }
 
@@ -29,6 +40,31 @@ document.getElementById('user-menu-btn').addEventListener('click', e => {
 document.addEventListener('click', () => {
   document.getElementById('user-menu-dropdown').classList.remove('open');
 });
+
+// ── GROUP-BASED NAV ACCESS ─────────────────────────────────────────────────────
+// Access is driven entirely by the group assigned to the employee in the
+// database (userv2.user_group) — there is no manual switcher.
+// FA      → only Endorsement + Failure Analysis are shown
+// PROCESS → only Rework + Return are shown
+// ADMIN   → everything is shown
+const VALID_GROUPS = ['FA', 'PROCESS', 'ADMIN'];
+
+function applyGroupAccess(group) {
+  const normalized = (group || '').trim().toUpperCase();
+  const show = VALID_GROUPS.includes(normalized);
+  if (!show) {
+    console.warn(
+      `[FA Dashboard] Unrecognized group "${group}" — hiding all group-restricted menu items ` +
+      `(Endorsement, Failure Analysis, Rework, Return) because it doesn't match FA/PROCESS/ADMIN. ` +
+      `Check the value of userv2.user_group for this account, and that functions.py's authenticate() ` +
+      `is reading the right column.`
+    );
+  }
+  document.querySelectorAll('[data-group]').forEach(el => {
+    // Fail closed on an unknown/missing group instead of showing everything.
+    el.style.display = (show && (normalized === 'ADMIN' || el.dataset.group === normalized)) ? '' : 'none';
+  });
+}
 
 // ── LOGIN ─────────────────────────────────────────────────────────────────────
 document.getElementById('btn-login').addEventListener('click', doLogin);
@@ -43,16 +79,30 @@ async function doLogin() {
 
   loader(true);
   try {
-    const res  = await fetch('/api/login', {
+    const res = await fetch('/api/login', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ employee_num: u, badge: p })
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        employee_num: u,
+        badge: p
+      })
     });
+
+    if (!res.ok) {
+      throw new Error(`Server returned HTTP ${res.status}`);
+    }
+
     const json = await res.json();
     if (json.ok) {
-      const name = json.user.employee_name || json.user.employee_num;
+      const name  = json.user.employee_name || json.user.employee_num;
+      const group = json.user.group || '';
       document.getElementById('user-label').textContent = name;
-      sessionStorage.setItem('fa_user', name);
+      localStorage.setItem('fa_user', name);
+      localStorage.setItem('fa_user_num', json.user.employee_num || '');
+      localStorage.setItem('fa_group', group);
+      applyGroupAccess(group);
       document.getElementById('login-screen').style.display  = 'none';
       document.getElementById('dashboard-screen').style.display = 'block';
       await loadAndRender();
@@ -69,12 +119,29 @@ async function doLogin() {
 // ── LOGOUT ────────────────────────────────────────────────────────────────────
 document.getElementById('btn-logout').addEventListener('click', () => {
   allData = []; filteredData = [];
-  sessionStorage.removeItem('fa_user');
+  localStorage.removeItem('fa_user');
+  localStorage.removeItem('fa_user_num');
+  localStorage.removeItem('fa_group');
   document.getElementById('inp-pass').value = '';
   document.getElementById('login-error').textContent = '';
   document.getElementById('user-menu-dropdown').classList.remove('open');
   document.getElementById('dashboard-screen').style.display = 'none';
   document.getElementById('login-screen').style.display     = 'flex';
+});
+
+// ── RESTORE LOGIN AFTER PAGE REFRESH ─────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+    const savedUser  = localStorage.getItem('fa_user');
+    const savedGroup = localStorage.getItem('fa_group') || '';
+
+    if (savedUser) {
+        document.getElementById('user-label').textContent = savedUser;
+        applyGroupAccess(savedGroup);
+        document.getElementById('login-screen').style.display = 'none';
+        document.getElementById('dashboard-screen').style.display = 'block';
+
+        await loadAndRender();
+    }
 });
 
 // ── CHANGE PASSWORD MODAL ─────────────────────────────────────────────────────
@@ -85,43 +152,97 @@ document.getElementById('btn-change-pass').addEventListener('click', () => {
 document.getElementById('btn-chpass-close').addEventListener('click', () => {
   document.getElementById('modal-chpass').style.display = 'none';
 });
+
 document.getElementById('btn-chpass-submit').addEventListener('click', async () => {
   const cur  = document.getElementById('chpass-current').value.trim();
   const nw   = document.getElementById('chpass-new').value.trim();
   const conf = document.getElementById('chpass-confirm').value.trim();
   const err  = document.getElementById('chpass-error');
+
   err.textContent = '';
-  if (!cur || !nw || !conf) { err.textContent = 'All fields are required.'; return; }
-  if (nw !== conf)           { err.textContent = 'New badges do not match.'; return; }
-  const res  = await fetch('/api/change_password', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ current_badge: cur, new_badge: nw })
-  });
-  const json = await res.json();
-  if (json.ok) {
-    document.getElementById('modal-chpass').style.display = 'none';
-    ['chpass-current','chpass-new','chpass-confirm'].forEach(id => document.getElementById(id).value = '');
-  } else {
-    err.textContent = json.error || 'Failed to update badge.';
+
+  if (!cur || !nw || !conf) {
+    err.textContent = 'All fields are required.';
+    return;
+  }
+
+  if (nw !== conf) {
+    err.textContent = 'New badges do not match.';
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/change_password', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        current_badge: cur,
+        new_badge: nw
+      })
+    });
+
+    if (!res.ok) {
+      throw new Error(`Server returned HTTP ${res.status}`);
+    }
+
+    const json = await res.json();
+
+    if (json.ok) {
+      document.getElementById('modal-chpass').style.display = 'none';
+
+      [
+        'chpass-current',
+        'chpass-new',
+        'chpass-confirm'
+      ].forEach(id => {
+        document.getElementById(id).value = '';
+      });
+
+    } else {
+      err.textContent = json.error || 'Failed to update badge.';
+    }
+
+  } catch (e) {
+    console.error('[FA Dashboard] Password change failed:', e);
+    err.textContent = 'Could not update badge: ' + e.message;
   }
 });
 
 // ── DATA ──────────────────────────────────────────────────────────────────────
 async function loadAndRender() {
   loader(true);
+
   try {
-    const res  = await fetch('/api/data');
+    const res = await fetch('/api/data');
+
+    if (!res.ok) {
+      throw new Error(`Server returned HTTP ${res.status}`);
+    }
+
     const json = await res.json();
-    if (!json.ok) { alert('Data error: ' + json.error); return; }
-    allData = json.rows;
+
+    if (!json.ok) {
+      throw new Error(json.error || 'Failed to load data.');
+    }
+
+    allData = Array.isArray(json.rows) ? json.rows : [];
+
+    // Always return to page 1 after loading new data
+    page = 1;
+
     populateFilters();
     applyFilters();
+
+  } catch (e) {
+    console.error('[FA Dashboard] Data load failed:', e);
+    alert('Could not load dashboard data: ' + e.message);
+
   } finally {
     loader(false);
   }
 }
-
 // ── FILTERS ───────────────────────────────────────────────────────────────────
 function populateFilters() {
   fillSelect('f-product', [...new Set(allData.map(r=>r.product).filter(Boolean))].sort());
@@ -156,8 +277,19 @@ function applyFilters() {
     if (model  && r.model    !== model)  return false;
     if (sta    && r.station  !== sta)    return false;
     if (status && String(r.farepair_status) !== status) return false;
-    if (from && r.faendorse_datetime && r.faendorse_datetime.slice(0,10) < from) return false;
-    if (to   && r.faendorse_datetime && r.faendorse_datetime.slice(0,10) > to)   return false;
+    if (from) {
+      if (!r.faendorse_datetime ||
+          String(r.faendorse_datetime).slice(0, 10) < from) {
+        return false;
+      }
+    }
+
+    if (to) {
+      if (!r.faendorse_datetime ||
+          String(r.faendorse_datetime).slice(0, 10) > to) {
+        return false;
+      }
+    }
     return true;
   });
   renderKPIs(); renderCharts(); renderTable();
@@ -171,6 +303,34 @@ function renderKPIs() {
   document.getElementById('kpi-closed').textContent   = filteredData.filter(r=>r.farepair_status==4).length.toLocaleString();
   document.getElementById('kpi-products').textContent = new Set(filteredData.map(r=>r.product).filter(Boolean)).size;
 }
+// ── KPI CARD CLICK-TO-FILTER ───────────────────────────────────────────────
+document.querySelectorAll('.kpi-clickable').forEach(card => {
+  card.addEventListener('click', () => {
+    const status = card.dataset.status;
+    const sel = document.getElementById('f-status');
+    const alreadyActive = card.classList.contains('active');
+
+    document.querySelectorAll('.kpi-clickable').forEach(c => c.classList.remove('active'));
+
+    // Clicking an already-active card clears the filter (toggle behavior)
+    sel.value = alreadyActive ? '' : status;
+    if (!alreadyActive) card.classList.add('active');
+
+    page = 1;
+    applyFilters();
+    // Float/pop animation on the clicked card itself — no auto-scroll.
+    card.classList.remove('kpi-floating');
+    void card.offsetWidth; // force reflow so rapid re-clicks restart the animation
+    card.classList.add('kpi-floating');
+    card.addEventListener('animationend', () => card.classList.remove('kpi-floating'), { once: true });
+
+    // If the card was just activated, open the list modal showing all matching
+    // records so the user can see a summary instead of a single record.
+    if (!alreadyActive) {
+      setTimeout(() => showFailureList(String(status)), 120);
+    }
+  });
+});
 
 // ── CHARTS (pure Canvas) ──────────────────────────────────────────────────────
 function countBy(arr, key) {
@@ -337,9 +497,9 @@ document.getElementById('btn-next').addEventListener('click', () => { if(page*PA
 function renderTable() {
   const start = (page-1)*PAGE_SIZE;
   const slice = filteredData.slice(start, start+PAGE_SIZE);
-  const dateCol = v => v ? `<span style="color:var(--muted)">${String(v).slice(0,10)}</span>` : '–';
+  const dateCol = v => v ? `<span style="color:var(--muted)">${escapeHtml(String(v).slice(0,10))}</span>` : '–';
   document.getElementById('table-body').innerHTML = slice.map((r,i) => `
-    <tr>
+    <tr data-record-index="${start + i}" title="Click to view failure details">
       <td style="color:var(--muted)">${start+i+1}</td>
       <td style="font-family:monospace;color:var(--accent3)">${fmt(r.serial_num)}</td>
       <td>${fmt(r.product)}</td>
@@ -363,7 +523,17 @@ function renderTable() {
       <td>${dateCol(r.returned_datetime)}</td>
       <td>${statusTag(r.farepair_status)}</td>
     </tr>`).join('');
+  // Make each rendered failure record clickable
+  document.querySelectorAll('#table-body tr').forEach(row => {
+    row.addEventListener('click', () => {
+      const index = Number(row.dataset.recordIndex);
+      const record = filteredData[index];
 
+      if (record) {
+        showFailureRecord(record);
+      }
+    });
+  });
   const total = filteredData.length;
   const end   = Math.min(start+PAGE_SIZE, total);
   document.getElementById('page-info').textContent = total
@@ -372,6 +542,210 @@ function renderTable() {
   document.getElementById('btn-prev').disabled = page === 1;
   document.getElementById('btn-next').disabled = end >= total;
 }
+// ── FAILURE RECORD DETAIL MODAL ───────────────────────────────────────────────
+
+const failureDetailModal = document.getElementById('modal-failure-record');
+
+// Failure list modal (summary of matching records)
+const failureListModal = document.getElementById('modal-failure-list');
+
+function showFailureList(status) {
+  if (!failureListModal) return;
+
+  const titleMap = { '1': 'Open FA', '2': 'In Progress', '4': 'Closed' };
+  const subtitle = document.getElementById('failure-list-subtitle');
+  const countEl  = document.getElementById('failure-list-count');
+  const body     = document.getElementById('failure-list-body');
+
+  const matches = filteredData.filter(r => String(r.farepair_status) === String(status));
+
+  subtitle.textContent = titleMap[status] ? `${titleMap[status]} — matching records` : 'Matching records';
+  countEl.textContent  = matches.length ? `${matches.length.toLocaleString()} records` : '';
+
+  if (!matches.length) {
+    body.innerHTML = `<tr><td colspan="7" style="padding:18px;color:var(--muted)">No matching records</td></tr>`;
+  } else {
+    body.innerHTML = matches.map((r, i) => `
+      <tr class="failure-list-row" data-serial="${escapeHtml(r.serial_num)}" style="cursor:pointer">
+        <td style="padding:8px;color:var(--muted)">${i+1}</td>
+        <td style="padding:8px;font-family:monospace;color:var(--accent3)">${fmt(r.serial_num)}</td>
+        <td style="padding:8px">${fmt(r.product)}</td>
+        <td style="padding:8px">${fmt(r.model)}</td>
+        <td style="padding:8px">${fmt(r.station)}</td>
+        <td style="padding:8px">${statusLabel(r.farepair_status)}</td>
+        <td style="padding:8px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${fmt(r.test_failure)}</td>
+      </tr>
+    `).join('');
+
+    // Attach click handlers to open the detail modal for a selected row
+    Array.from(body.querySelectorAll('.failure-list-row')).forEach(row => {
+      row.addEventListener('click', () => {
+        const serial = row.dataset.serial;
+        const record = filteredData.find(rr => String(rr.serial_num) === String(serial));
+        if (record) showFailureRecord(record);
+      });
+    });
+  }
+
+  failureListModal.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+
+function closeFailureListModal() {
+  if (!failureListModal) return;
+  failureListModal.style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+// Close buttons for failure list modal
+const btnFailureListClose = document.getElementById('btn-failure-list-close');
+if (btnFailureListClose) btnFailureListClose.addEventListener('click', closeFailureListModal);
+const btnFailureListExit = document.getElementById('btn-failure-list-exit');
+if (btnFailureListExit) btnFailureListExit.addEventListener('click', closeFailureListModal);
+
+// Click outside modal to close
+if (failureListModal) {
+  failureListModal.addEventListener('click', e => {
+    if (e.target === failureListModal) closeFailureListModal();
+  });
+}
+
+function failureDetailFmt(value) {
+  if (value == null || value === '') return '–';
+  return String(value);
+}
+
+function failureDetailDate(value) {
+  if (!value) return '–';
+  return String(value);
+}
+
+function showFailureRecord(record) {
+  if (!record) return;
+
+  // Focus information
+  document.getElementById('failure-detail-serial').textContent =
+    failureDetailFmt(record.serial_num);
+
+  document.getElementById('failure-detail-subtitle').textContent =
+    `${failureDetailFmt(record.product)} · ${failureDetailFmt(record.model)}`;
+
+  // Status
+  const statusEl = document.getElementById('failure-detail-status');
+
+  const status = Number(record.farepair_status);
+
+  if (status === 1) {
+    statusEl.textContent = 'OPEN';
+    statusEl.style.background = 'rgba(217,119,6,.13)';
+    statusEl.style.color = '#b45309';
+  } else if (status === 2) {
+    statusEl.textContent = 'WIP';
+    statusEl.style.background = 'rgba(37,99,235,.13)';
+    statusEl.style.color = '#2563eb';
+  } else if (status === 4) {
+    statusEl.textContent = 'CLOSED';
+    statusEl.style.background = 'rgba(22,163,74,.13)';
+    statusEl.style.color = '#15803d';
+  } else {
+    statusEl.textContent = '–';
+    statusEl.style.background = 'rgba(107,114,128,.10)';
+    statusEl.style.color = '#6b7280';
+  }
+
+  // Failure information
+  document.getElementById('fd-product').textContent =
+    failureDetailFmt(record.product);
+
+  document.getElementById('fd-model').textContent =
+    failureDetailFmt(record.model);
+
+  document.getElementById('fd-po').textContent =
+    failureDetailFmt(record.po_num);
+
+  document.getElementById('fd-station').textContent =
+    failureDetailFmt(record.station);
+
+  document.getElementById('fd-test-failure').textContent =
+    failureDetailFmt(record.test_failure);
+
+  document.getElementById('fd-prod-endorser').textContent =
+    failureDetailFmt(record.prod_endorser);
+
+  document.getElementById('fd-fa-endorse-date').textContent =
+    failureDetailDate(record.faendorse_datetime);
+
+  // FA information
+  document.getElementById('fd-failure-cause').textContent =
+    failureDetailFmt(record.failure_cause);
+
+  document.getElementById('fd-affected-comp').textContent =
+    failureDetailFmt(record.affected_comp);
+
+  document.getElementById('fd-defect-cat').textContent =
+    failureDetailFmt(record.defect_cat);
+
+  document.getElementById('fd-fa-pic').textContent =
+    failureDetailFmt(record.fa_pic);
+
+  document.getElementById('fd-fa-class').textContent =
+    failureDetailFmt(record.fa_class);
+
+  document.getElementById('fd-fa-case').textContent =
+    failureDetailFmt(record.fa_case);
+
+  document.getElementById('fd-proposed-action').textContent =
+    failureDetailFmt(record.proposed_action);
+
+  document.getElementById('fd-fa-ended-date').textContent =
+    failureDetailDate(record.faended_datetime);
+
+  // Repair / return
+  document.getElementById('fd-repairer').textContent =
+    failureDetailFmt(record.repairer);
+
+  document.getElementById('fd-action-taken').textContent =
+    failureDetailFmt(record.action_taken);
+
+  document.getElementById('fd-repaired-date').textContent =
+    failureDetailDate(record.repaired_datetime);
+
+  document.getElementById('fd-returned-date').textContent =
+    failureDetailDate(record.returned_datetime);
+
+  // Show modal
+  failureDetailModal.style.display = 'flex';
+
+  // Prevent the page behind the modal from scrolling
+  document.body.style.overflow = 'hidden';
+}
+
+function closeFailureRecordModal() {
+  failureDetailModal.style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+// Close buttons
+document.getElementById('btn-failure-detail-close')
+  .addEventListener('click', closeFailureRecordModal);
+
+document.getElementById('btn-failure-detail-exit')
+  .addEventListener('click', closeFailureRecordModal);
+
+// Click outside modal
+failureDetailModal.addEventListener('click', e => {
+  if (e.target === failureDetailModal) {
+    closeFailureRecordModal();
+  }
+});
+
+// ESC key
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' &&
+      failureDetailModal.style.display === 'flex') {
+    closeFailureRecordModal();
+  }
+});
 
 // ── DOWNLOAD ──────────────────────────────────────────────────────────────────
 document.getElementById('btn-dl-toggle').addEventListener('click', e => {

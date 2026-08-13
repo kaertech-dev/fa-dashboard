@@ -46,7 +46,7 @@
 
 /* Green UUT text-display panel, matching the scanner reference */
 #fa-text-display {
-  background: #39ff6a;
+  background: #16a34a;
   color: #0a3d1c;
   font-weight: 600;
   font-family: 'Consolas', monospace;
@@ -56,6 +56,8 @@
   border-radius: 6px;
   padding: 12px 14px;
   min-height: 130px;
+  max-height: 220px;
+  overflow-y: auto;
   white-space: pre-wrap;
   margin: 0;
 }

@@ -1,0 +1,15 @@
+services:
+  fa-fashboard:
+    build: .
+    image: fa_traceability
+    container_name: fa_traceability
+    ports:
+      - "5007:5007"
+    restart: always
+    environment:
+      - FLASK_ENV=production
+    networks:
+      - manufacturing_network
+networks:
+  manufacturing_network:
+    driver: bridge

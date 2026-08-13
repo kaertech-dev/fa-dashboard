@@ -66,19 +66,22 @@
         </button>
         <div class="user-menu-dropdown" id="user-menu-dropdown">
           <div class="user-menu-section-label">Navigate</div>
-          <!-- <a class="user-menu-item" href="/endorsement" target="_blank">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+
+          <div class="user-menu-section-label" data-group="FA">FA</div>
+          <button class="user-menu-item" href="#" id="btn-endorsement" data-group="FA">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.5"/><path d="M8 5.5v3l2 1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
             Endorsement
-          </a> -->
-          <button class="user-menu-item" href="#" id="btn-failure-analysis">
+          </button>
+          <button class="user-menu-item" href="#" id="btn-failure-analysis" data-group="FA">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.5"/><path d="M8 5.5v3l2 1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
             Failure Analysis
           </button>
-          <button class="user-menu-item" href="#" id="btn-rework">
+          <div class="user-menu-section-label" data-group="PROCESS">PROCESS</div>
+          <button class="user-menu-item" href="#" id="btn-rework" data-group="PROCESS">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 8a5 5 0 0 1 9.9-1M13 8a5 5 0 0 1-9.9 1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M13 4v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
             Rework
           </button>
-          <button class="user-menu-item" href="#" id="btn-return">
+          <button class="user-menu-item" href="#" id="btn-return" data-group="PROCESS">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M13 8H3M7 4l-4 4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
             Return
           </button>
@@ -164,9 +167,9 @@
     <!-- KPI cards -->
     <div class="kpi-row">
       <div class="kpi-card red">  <div class="kpi-label">Total Failures</div><div class="kpi-val" id="kpi-total">–</div><div class="kpi-sub">serial numbers</div></div>
-      <div class="kpi-card warn"> <div class="kpi-label">Open FA</div>      <div class="kpi-val" id="kpi-open">–</div> <div class="kpi-sub">status = Open</div></div>
-      <div class="kpi-card blue"> <div class="kpi-label">In Progress</div>  <div class="kpi-val" id="kpi-wip">–</div>  <div class="kpi-sub">status = WIP</div></div>
-      <div class="kpi-card green"><div class="kpi-label">Closed</div>       <div class="kpi-val" id="kpi-closed">–</div><div class="kpi-sub">status = Closed</div></div>
+      <div class="kpi-card warn kpi-clickable"  data-status="1"><div class="kpi-label">Open FA</div>     <div class="kpi-val" id="kpi-open">–</div> <div class="kpi-sub">status = Open</div></div>
+      <div class="kpi-card blue kpi-clickable"  data-status="2"><div class="kpi-label">In Progress</div> <div class="kpi-val" id="kpi-wip">–</div>  <div class="kpi-sub">status = WIP</div></div>
+      <div class="kpi-card green kpi-clickable" data-status="4"><div class="kpi-label">Closed</div>      <div class="kpi-val" id="kpi-closed">–</div><div class="kpi-sub">status = Closed</div></div>
       <div class="kpi-card blue"> <div class="kpi-label">Products</div>     <div class="kpi-val" id="kpi-products">–</div><div class="kpi-sub">unique</div></div>
     </div>
 
@@ -187,6 +190,18 @@
       <div class="section-title">Failures by Defect Category</div>
       <div style="font-size:.78rem;color:var(--muted);margin-bottom:12px">Sorted by count — highest first</div>
       <canvas id="chart-defect-cat"></canvas>
+    </div>
+
+    <!-- Charts row 1: Product + Station -->
+    <div class="charts-row">
+      <div class="chart-card">
+        <div class="section-title">Failures by Product</div>
+        <canvas id="chart-product" height="220"></canvas>
+      </div>
+      <div class="chart-card">
+        <div class="section-title">Failures by Station</div>
+        <canvas id="chart-station" height="220"></canvas>
+      </div>
     </div>
 
     <!-- Table -->
@@ -235,6 +250,78 @@
   </main>
 </div>
 
+<!-- ── Endorsement modal ── -->
+<!-- Matches the legacy "Endorse Rejects To FA" tool: Production selects
+     Product/Model/Station, scans the Serial Number, and records the
+     Endorser + Failure Mode + PO. Submitting registers a NEW FA record
+     (or refreshes it if this serial was already endorsed once). -->
+<div id="modal-endorsement" class="modal-backdrop" style="display:none">
+  <div class="modal-card" style="max-width:600px">
+    <div class="modal-header">
+      <span class="modal-title">ENDORSE REJECTS TO FA</span>
+      <button class="modal-close" id="btn-endorsement-close">✕</button>
+    </div>
+
+    <div style="display:flex;gap:12px">
+      <div class="field" style="flex:1">
+        <label>PRODUCT</label>
+        <select id="endorsement-product" disabled><option value="">Select…</option></select>
+        <div style="font-size:.72rem;color:var(--muted);margin-top:2px">Active customer</div>
+      </div>
+      <div class="field" style="flex:1">
+        <label>MODEL</label>
+        <select id="endorsement-model" disabled><option value="">Select a product first…</option></select>
+      </div>
+      <div class="field" style="flex:1">
+        <label>STATION</label>
+        <input type="text" id="endorsement-station" list="endorsement-station-list"
+          placeholder="Auto-filled from last log — editable" required>
+        <datalist id="endorsement-station-list"></datalist>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:12px">
+      <div class="field" style="flex:1">
+        <label>SERIAL NUMBER</label>
+        <input type="text" id="endorsement-serial" placeholder="Scan or type serial number">
+      </div>
+      <div class="field" style="flex:1">
+        <label>ENDORSER</label>
+        <div style="display:flex;gap:6px">
+          <input type="text" id="endorsement-endorser" placeholder="Endorser employee number" readonly style="flex:1">
+          <button type="button" class="btn-reset" id="btn-endorsement-endorser-change">Change</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>TEXT DISPLAY</label>
+      <pre id="endorsement-text-display" style="background:#16a34a;color:#0a3d1c;font-weight:600;
+        font-family:Consolas,monospace;font-size:.8rem;border-radius:6px;padding:10px 12px;
+        min-height:80px;white-space:pre-wrap;margin:0">Please enter the employee number of the endorser.</pre>
+    </div>
+
+    <div class="field">
+      <label>FAILURE MODE</label>
+      <textarea id="endorsement-failure-mode" rows="3" placeholder="Describe the test failure" required
+        style="width:100%;resize:vertical;font-family:inherit;font-size:.85rem;padding:8px 10px;
+        border-radius:6px;border:1px solid var(--border,#d1d5db);box-sizing:border-box"></textarea>
+    </div>
+
+    <div class="field">
+      <label>PO</label>
+      <input type="text" id="endorsement-po" placeholder="input PO num">
+    </div>
+
+    <div id="endorsement-error" style="color:var(--danger);font-size:.83rem;min-height:18px;margin-bottom:4px"></div>
+
+    <div style="display:flex;gap:10px">
+      <button class="btn-apply" id="btn-endorsement-submit" style="flex:1">Endorse to FA</button>
+      <button class="btn-reset" id="btn-endorsement-exit" style="flex:1">Exit</button>
+    </div>
+  </div>
+</div>
+
 <!-- Failure Analysis modal -->
 <div id="modal-fa" class="modal-backdrop" style="display:none">
   <div class="modal-card" style="max-width:560px">
@@ -256,7 +343,7 @@
 
     <div class="field">
       <label>TEXT DISPLAY</label>
-      <pre id="fa-text-display" style="background:#39ff6a;color:#0a3d1c;font-weight:600;
+      <pre id="fa-text-display" style="background:#16a34a;color:#0a3d1c;font-weight:600;
         font-family:Consolas,monospace;font-size:.8rem;border-radius:6px;padding:10px 12px;
         min-height:120px;white-space:pre-wrap;margin:0">Scan a serial number to load UUT details…</pre>
     </div>
@@ -264,22 +351,22 @@
     <div style="display:flex;gap:12px">
       <div class="field" style="flex:1">
         <label>CAUSE OF FAILURE</label>
-        <input type="text" id="fa-failure-cause" placeholder="Cause of failure">
+        <input type="text" id="fa-failure-cause" placeholder="Cause of failure" required>
       </div>
       <div class="field" style="flex:1">
         <label>PROPOSED ACTION</label>
-        <select id="fa-proposed-action"><option value="">Select…</option></select>
+        <input id="fa-proposed-action" value="" placeholder="Input Proposed Action" required></input>
       </div>
     </div>
 
     <div style="display:flex;gap:12px">
       <div class="field" style="flex:1">
         <label>AFFECTED COMPONENT</label>
-        <input type="text" id="fa-affected-comp" placeholder="Affected component">
+        <input type="text" id="fa-affected-comp" placeholder="Affected component" required>
       </div>
       <div class="field" style="flex:1">
         <label>DEFECT CATEGORY</label>
-        <select id="fa-defect-cat"><option value="">Select…</option></select>
+        <select id="fa-defect-cat" required><option value="">Select…</option></select>
       </div>
     </div>
 
@@ -347,7 +434,7 @@
 
     <div class="field">
       <label>TEXT DISPLAY</label>
-      <pre id="rework-text-display" style="background:#ffe11a;color:#4a3b00;font-weight:600;
+      <pre id="rework-text-display" style="background:#16a34a;color:#4a3b00;font-weight:600;
         font-family:Consolas,monospace;font-size:.8rem;border-radius:6px;padding:10px 12px;
         min-height:160px;white-space:pre-wrap;margin:0">Please enter the employee number of the reworker.</pre>
     </div>
@@ -390,7 +477,7 @@
 
     <div class="field">
       <label>TEXT DISPLAY</label>
-      <pre id="return-text-display" style="background:#ffe11a;color:#4a3b00;font-weight:600;
+      <pre id="return-text-display" style="background:#16a34a;color:#4a3b00;font-weight:600;
         font-family:Consolas,monospace;font-size:.8rem;border-radius:6px;padding:10px 12px;
         min-height:160px;white-space:pre-wrap;margin:0">Please enter the employee number of the person-in-charge.</pre>
     </div>
@@ -412,23 +499,218 @@
       <button class="modal-close" id="btn-chpass-close">✕</button>
     </div>
     <div class="field">
-      <label>Current Badge</label>
-      <input type="password" id="chpass-current" placeholder="Current badge">
+      <label>Current password</label>
+      <input type="password" id="chpass-current" placeholder="Current password">
     </div>
     <div class="field">
-      <label>New Badge</label>
-      <input type="password" id="chpass-new" placeholder="New badge">
+      <label>New password</label>
+      <input type="password" id="chpass-new" placeholder="New password">
     </div>
     <div class="field">
-      <label>Confirm New Badge</label>
-      <input type="password" id="chpass-confirm" placeholder="Repeat new badge">
+      <label>Confirm new password</label>
+      <input type="password" id="chpass-confirm" placeholder="Repeat new password">
     </div>
     <div id="chpass-error" style="color:var(--danger);font-size:.83rem;min-height:18px;margin-bottom:4px"></div>
     <button class="btn-apply" id="btn-chpass-submit" style="width:100%;margin-top:4px">Update Badge</button>
   </div>
 </div>
+<!-- ── FAILURE RECORD DETAIL MODAL ── -->
+<div id="modal-failure-record" class="modal-backdrop failure-detail-backdrop" style="display:none">
+  <div class="modal-card failure-detail-modal">
+
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">FAILURE RECORD</div>
+        <div id="failure-detail-subtitle" class="failure-detail-subtitle">
+          Failure record details
+        </div>
+      </div>
+      <button class="modal-close" id="btn-failure-detail-close">✕</button>
+    </div>
+
+    <!-- Focus / summary area -->
+    <div class="failure-focus">
+      <div class="failure-focus-main">
+        <span class="failure-focus-label">SERIAL NUMBER</span>
+        <span id="failure-detail-serial" class="failure-focus-serial">–</span>
+      </div>
+
+      <div id="failure-detail-status" class="failure-focus-status">
+        –
+      </div>
+    </div>
+
+    <!-- Main failure information -->
+    <div class="failure-detail-section">
+      <div class="failure-detail-section-title">
+        Failure Information
+      </div>
+
+      <div class="failure-detail-grid">
+        <div class="failure-detail-item">
+          <span>Product</span>
+          <strong id="fd-product">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>Model</span>
+          <strong id="fd-model">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>PO Number</span>
+          <strong id="fd-po">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>Station</span>
+          <strong id="fd-station">–</strong>
+        </div>
+
+        <div class="failure-detail-item failure-detail-wide">
+          <span>Test Failure</span>
+          <strong id="fd-test-failure">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>Production Endorser</span>
+          <strong id="fd-prod-endorser">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>FA Endorse Date</span>
+          <strong id="fd-fa-endorse-date">–</strong>
+        </div>
+      </div>
+    </div>
+
+    <!-- Analysis -->
+    <div class="failure-detail-section failure-analysis-focus">
+      <div class="failure-detail-section-title">
+        Failure Analysis
+      </div>
+
+      <div class="failure-detail-grid">
+        <div class="failure-detail-item failure-detail-wide">
+          <span>Failure Cause</span>
+          <strong id="fd-failure-cause">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>Affected Component</span>
+          <strong id="fd-affected-comp">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>Defect Category</span>
+          <strong id="fd-defect-cat">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>FA PIC</span>
+          <strong id="fd-fa-pic">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>FA Class</span>
+          <strong id="fd-fa-class">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>FA Case</span>
+          <strong id="fd-fa-case">–</strong>
+        </div>
+
+        <div class="failure-detail-item failure-detail-wide">
+          <span>Proposed Action</span>
+          <strong id="fd-proposed-action">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>FA Ended Date</span>
+          <strong id="fd-fa-ended-date">–</strong>
+        </div>
+      </div>
+    </div>
+
+    <!-- Repair -->
+    <div class="failure-detail-section">
+      <div class="failure-detail-section-title">
+        Repair / Return
+      </div>
+
+      <div class="failure-detail-grid">
+        <div class="failure-detail-item">
+          <span>Repairer</span>
+          <strong id="fd-repairer">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>Repaired Date</span>
+          <strong id="fd-repaired-date">–</strong>
+        </div>
+
+        <div class="failure-detail-item failure-detail-wide">
+          <span>Action Taken</span>
+          <strong id="fd-action-taken">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>Returned Date</span>
+          <strong id="fd-returned-date">–</strong>
+        </div>
+      </div>
+    </div>
+
+    <div class="failure-detail-footer">
+      <button class="btn-reset" id="btn-failure-detail-exit">
+        Close
+      </button>
+    </div>
+
+  </div>
+</div>
+
+<!-- Failure Records List Modal (summary of matching records) -->
+<div id="modal-failure-list" class="modal-backdrop" style="display:none">
+  <div class="modal-card">
+    <div class="modal-header">
+      <span class="modal-title">Failure Records</span>
+      <button class="modal-close" id="btn-failure-list-close">✕</button>
+    </div>
+
+    <div style="padding:12px 18px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div id="failure-list-subtitle" style="color:var(--muted)">Summary of matching records</div>
+        <div id="failure-list-count" style="font-weight:600"></div>
+      </div>
+
+      <div style="max-height:420px;overflow:auto;border-top:1px solid var(--border);">
+        <table style="width:100%;border-collapse:collapse">
+          <thead>
+            <tr style="text-align:left;font-weight:600;color:var(--muted)">
+              <th style="width:40px;padding:8px">#</th>
+              <th style="padding:8px">Serial</th>
+              <th style="padding:8px">Product</th>
+              <th style="padding:8px">Model</th>
+              <th style="padding:8px">Station</th>
+              <th style="padding:8px">Status</th>
+              <th style="padding:8px">Short Failure</th>
+            </tr>
+          </thead>
+          <tbody id="failure-list-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px;padding:12px 18px;border-top:1px solid var(--border);">
+      <button class="btn-reset" id="btn-failure-list-exit" style="flex:1">Close</button>
+    </div>
+  </div>
+</div>
 
 <script src="{{ url_for('static', filename='js/fa_dashboard.js') }}"></script>
+<script src="{{ url_for('static', filename='js/endorsement.js') }}"></script>
 <script src="{{ url_for('static', filename='js/fa_page.js') }}"></script>
 <script src="{{ url_for('static', filename='js/rework.js') }}"></script>
 <script src="{{ url_for('static', filename='js/return.js') }}"></script>

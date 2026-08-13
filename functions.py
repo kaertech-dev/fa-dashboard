@@ -34,14 +34,17 @@ def authenticate(employee_num: str, badge_raw: str):
     """
     Verify credentials against fa.userv2.
     employee_num = username, badge (bcrypt hash) = password.
-    Returns the user row dict on success, or None on failure.
+    Returns the user row dict on success (including user_group), or None on failure.
+
+    NOTE: assumes the group column is named `user_group`. Rename below if your
+    schema uses a different column name (e.g. `group_name`, `role`).
     """
     conn = get_fa_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT employee_num, employee_name, badge
+                SELECT employee_num, employee_name, badge, `group` AS user_group
                 FROM userv2
                 WHERE employee_num = %s
                 LIMIT 1
@@ -74,7 +77,10 @@ def get_fa_by_serial(serial_num: str):
 
 def get_distinct_values(column: str, limit: int = 200):
     """Return distinct non-empty values for a whitelisted column (dropdown options)."""
-    allowed = {"proposed_action", "defect_cat", "action_taken"}
+    allowed = {
+        "proposed_action", "defect_cat", "action_taken",
+        "product", "model", "station",
+    }
     if column not in allowed:
         raise ValueError(f"Column '{column}' is not allowed.")
 
@@ -171,7 +177,7 @@ def update_rework(serial_num: str, fields: dict):
         conn.close()
     return True
 
-def return_rework(serial_num: str, fields: str):
+def return_rework(serial_num: str, fields: dict):
     allowed = {
         "returned_datetime", "farepair_status"
     }
@@ -181,12 +187,62 @@ def return_rework(serial_num: str, fields: str):
         return False
     conn = get_fa_conn()
     try:
-        with conn.cursor as cur:
+        with conn.cursor() as cur:
             set_clause = ", ".join(f"{c} = %s" for c in set_cols)
             values = [fields[c] for c in set_cols] + [serial_num]
             cur.execute(f"UPDATE fa.main_copy SET {set_clause} WHERE serial_num = %s",
             values,
             )
+            conn.commit()
+    finally:
+        conn.close()
+    return True
+
+def create_or_update_endorsement(serial_num: str, fields: dict):
+    """
+    Endorsement step: register a rejected unit into fa.main_copy.
+
+    - If the serial number already exists (re-endorsed / re-rejected), refresh
+      its endorsement-stage fields.
+    - Otherwise, insert a brand-new row (this is normally the FIRST time a
+      serial enters the FA system).
+
+    `fields` should only contain endorsement-stage columns:
+      product, model, station, po_num, test_failure, prod_endorser,
+      faendorse_datetime, farepair_status
+    """
+    allowed = {
+        "product", "model", "station", "po_num", "test_failure",
+        "prod_endorser", "faendorse_datetime", "farepair_status",
+    }
+    fields = {k: v for k, v in fields.items() if k in allowed}
+    if not fields:
+        return False
+
+    conn = get_fa_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT serial_num FROM fa.main_copy WHERE serial_num = %s LIMIT 1",
+                (serial_num,),
+            )
+            exists = cur.fetchone()
+
+            if exists:
+                set_clause = ", ".join(f"{c} = %s" for c in fields)
+                values = list(fields.values()) + [serial_num]
+                cur.execute(
+                    f"UPDATE fa.main_copy SET {set_clause} WHERE serial_num = %s",
+                    values,
+                )
+            else:
+                cols = ["serial_num"] + list(fields.keys())
+                placeholders = ", ".join(["%s"] * len(cols))
+                values = [serial_num] + list(fields.values())
+                cur.execute(
+                    f"INSERT INTO fa.main_copy ({', '.join(cols)}) VALUES ({placeholders})",
+                    values,
+                )
             conn.commit()
     finally:
         conn.close()
