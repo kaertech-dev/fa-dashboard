@@ -225,7 +225,7 @@ tbody td { padding: 9px 14px; white-space: nowrap; }
 .spinner { width: 42px; height: 42px; border: 3px solid var(--border); border-top-color: var(--accent3); border-radius: 50%; animation: spin .7s linear infinite; }
 
 /* ── USER MENU DROPDOWN (append to fa_dashboard.css) ── */
-.user-menu-wrap { position: relative; }
+.user-menu-wrap { position: relative; display: contents;}
 .user-menu-btn {
   display: flex; align-items: center; gap: 7px;
   background: var(--surface2); border: 1px solid var(--border);
@@ -507,6 +507,14 @@ select:disabled { opacity: .5; cursor: not-allowed; }
 
 #table-body tr:active {
   background: rgba(247,129,102,.12);
+}
+
+.material-symbols-outlined {
+  font-variation-settings:
+  'FILL' 0,
+  'wght' 400,
+  'GRAD' 0,
+  'opsz' 24
 }
 
 /* Small screen */
