@@ -488,7 +488,178 @@ function renderCharts() {
   drawBarChart('chart-product', countBy(filteredData, 'product'));
   drawBarChart('chart-station', countBy(filteredData, 'station'));
   drawHBarChart('chart-defect-cat', countBy(filteredData, 'defect_cat'));
+  renderPareto();
 }
+
+function groupByFaCase() {
+  const groups = new Map();
+  filteredData.forEach(record => {
+    const faCase = String(record.fa_case || 'Unknown');
+    if (!groups.has(faCase)) groups.set(faCase, []);
+    groups.get(faCase).push(record);
+  });
+  return [...groups.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+}
+
+function unitsAffected(records) {
+  return new Set(records.map(record => String(record.serial_num || '')).filter(Boolean)).size;
+}
+
+function getFaCaseUrl(record) {
+  const url = record?.url ?? record?.link ?? record?.['fa.url'] ?? record?.fa_url ?? record?.document_url;
+  const value = String(url || '').trim();
+  if (!value) return '';
+  if (/^www\./i.test(value)) return `https://${value}`;
+  return /^https?:\/\//i.test(value) ? value : '';
+}
+
+function faCaseLink(records) {
+  const value = records.map(getFaCaseUrl).find(Boolean);
+  if (!value) return '';
+  return `<a class="pareto-case-link" href="${escapeHtml(value)}" target="_blank" rel="noopener noreferrer">See Documents</a>`;
+}
+
+function drawParetoTrend(records) {
+  const canvas = document.getElementById('chart-pareto-trend');
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const W = Math.max(280, canvas.parentElement.clientWidth - 4);
+  const H = 180;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const monthGroups = new Map();
+  records.forEach(record => {
+    const month = String(record.faendorse_datetime || '').slice(0, 7);
+    const serial = String(record.serial_num || '');
+    if (!/^\d{4}-\d{2}$/.test(month) || !serial) return;
+    if (!monthGroups.has(month)) monthGroups.set(month, new Set());
+    monthGroups.get(month).add(serial);
+  });
+  const entries = [...monthGroups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  if (!entries.length) {
+    ctx.fillStyle = '#6b7280';
+    ctx.font = '13px Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('No dated records', W / 2, H / 2);
+    return;
+  }
+
+  const values = entries.map(([, serials]) => serials.size);
+  const pad = { top: 18, right: 18, bottom: 42, left: 38 };
+  const chartW = W - pad.left - pad.right;
+  const chartH = H - pad.top - pad.bottom;
+  const maxValue = Math.max(...values, 1);
+  const step = chartW / entries.length;
+  const barW = Math.max(12, Math.min(56, step * .62));
+
+  for (let tick = 0; tick <= 4; tick++) {
+    const value = Math.round(maxValue * tick / 4);
+    const y = pad.top + chartH - chartH * tick / 4;
+    ctx.strokeStyle = '#e5e7eb';
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+    ctx.fillStyle = '#6b7280';
+    ctx.font = '10px Segoe UI, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(value, pad.left - 6, y + 4);
+  }
+
+  entries.forEach(([month, serials], index) => {
+    const value = serials.size;
+    const height = chartH * value / maxValue;
+    const x = pad.left + step * index + (step - barW) / 2;
+    const y = pad.top + chartH - height;
+    ctx.fillStyle = '#f78166';
+    ctx.fillRect(x, y, barW, height);
+    ctx.fillStyle = '#111827';
+    ctx.font = 'bold 11px Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(value, x + barW / 2, y - 5);
+    ctx.fillStyle = '#6b7280';
+    ctx.font = '10px Segoe UI, sans-serif';
+    const [year, monthNumber] = month.split('-');
+    const label = new Date(Number(year), Number(monthNumber) - 1, 1)
+      .toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+    ctx.fillText(label, x + barW / 2, H - 16);
+  });
+}
+
+function renderPareto() {
+  const topEl = document.getElementById('pareto-top-case');
+  const listEl = document.getElementById('pareto-case-list');
+  const groups = groupByFaCase();
+  if (!groups.length) {
+    topEl.innerHTML = '<div class="pareto-empty">No FA case data</div>';
+    listEl.innerHTML = '';
+    drawParetoTrend([]);
+    return;
+  }
+
+  const [topCase, topRecords] = groups[0];
+  const top = topRecords[0];
+  topEl.innerHTML = `
+    <div class="pareto-top-heading">Top FA Case: <strong>${fmt(topCase)}</strong>${faCaseLink(topRecords)}</div>
+    <div class="pareto-detail-grid">
+      <div><span>Product</span><strong>${fmt(top.product)}</strong></div>
+      <div><span>Model</span><strong>${fmt(top.model)}</strong></div>
+      <div><span>Test Failure</span><strong>${fmt(top.test_failure)}</strong></div>
+      <div><span>Cause of Failure</span><strong>${fmt(top.failure_cause)}</strong></div>
+      <div><span>Affected Component</span><strong>${fmt(top.affected_comp)}</strong></div>
+      <div><span>Defect Category</span><strong>${fmt(top.defect_cat)}</strong></div>
+      <div><span>Units Affected</span><strong>${unitsAffected(topRecords)}</strong></div>
+    </div>`;
+  drawParetoTrend(topRecords);
+
+  listEl.innerHTML = groups.slice(0, 5).map(([faCase, records], index) => `
+    <div class="pareto-case-row" data-fa-case="${escapeHtml(faCase)}">
+      <span class="pareto-rank">${index + 1}</span>
+      <span class="pareto-case-name">${fmt(faCase)}</span>
+      ${faCaseLink(records)}
+      <span class="pareto-case-count">${unitsAffected(records).toLocaleString()} units</span>
+    </div>`).join('');
+  listEl.querySelectorAll('.pareto-case-row').forEach(button => {
+    button.addEventListener('click', () => showFaCaseRecords(button.dataset.faCase));
+    button.querySelector('.pareto-case-link')?.addEventListener('click', event => event.stopPropagation());
+  });
+}
+
+function showFaCaseRecords(faCase) {
+  if (paretoGroupsModal.style.display === 'flex') closeParetoGroups();
+  const matches = filteredData.filter(record => String(record.fa_case || 'Unknown') === faCase);
+  renderFailureList(`FA Case ${faCase}`, matches);
+}
+
+const paretoGroupsModal = document.getElementById('modal-pareto-groups');
+function showParetoGroups() {
+  const body = document.getElementById('pareto-groups-body');
+  body.innerHTML = groupByFaCase().map(([faCase, records], index) => `
+    <div class="pareto-case-row" data-fa-case="${escapeHtml(faCase)}">
+      <span class="pareto-rank">${index + 1}</span>
+      <span class="pareto-case-name">${fmt(faCase)}</span>
+      ${faCaseLink(records)}
+      <span class="pareto-case-count">${unitsAffected(records).toLocaleString()} units</span>
+    </div>`).join('') || '<div class="pareto-empty">No FA case data</div>';
+  body.querySelectorAll('.pareto-case-row').forEach(button => {
+    button.addEventListener('click', () => showFaCaseRecords(button.dataset.faCase));
+    button.querySelector('.pareto-case-link')?.addEventListener('click', event => event.stopPropagation());
+  });
+  paretoGroupsModal.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+document.getElementById('btn-pareto-more').addEventListener('click', showParetoGroups);
+function closeParetoGroups() {
+  paretoGroupsModal.style.display = 'none';
+  document.body.style.overflow = '';
+}
+document.getElementById('btn-pareto-groups-close').addEventListener('click', closeParetoGroups);
+document.getElementById('btn-pareto-groups-exit').addEventListener('click', closeParetoGroups);
+paretoGroupsModal.addEventListener('click', event => {
+  if (event.target === paretoGroupsModal) closeParetoGroups();
+});
 
 // ── TABLE ─────────────────────────────────────────────────────────────────────
 document.getElementById('btn-prev').addEventListener('click', () => { if(page>1){page--;renderTable();} });
@@ -553,13 +724,17 @@ function showFailureList(status) {
   if (!failureListModal) return;
 
   const titleMap = { '1': 'Open FA', '2': 'In Progress', '4': 'Closed' };
+  const matches = filteredData.filter(r => String(r.farepair_status) === String(status));
+  renderFailureList(titleMap[status] ? `${titleMap[status]} — matching records` : 'Matching records', matches);
+}
+
+function renderFailureList(subtitleText, matches) {
+  if (!failureListModal) return;
   const subtitle = document.getElementById('failure-list-subtitle');
   const countEl  = document.getElementById('failure-list-count');
   const body     = document.getElementById('failure-list-body');
 
-  const matches = filteredData.filter(r => String(r.farepair_status) === String(status));
-
-  subtitle.textContent = titleMap[status] ? `${titleMap[status]} — matching records` : 'Matching records';
+  subtitle.textContent = subtitleText;
   countEl.textContent  = matches.length ? `${matches.length.toLocaleString()} records` : '';
 
   if (!matches.length) {

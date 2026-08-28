@@ -196,16 +196,19 @@
       <canvas id="chart-defect-cat"></canvas>
     </div>
 
-    <!-- Charts row 1: Product + Station -->
-    <div class="charts-row">
-      <div class="chart-card">
-        <div class="section-title">Failures by Product</div>
-        <canvas id="chart-product" height="220"></canvas>
+    <!-- Pareto: repeated FA cases -->
+    <div class="chart-card pareto-card">
+      <div class="section-title">Pareto: Most FA Case</div>
+      <div id="pareto-top-case" class="pareto-top-case"></div>
+      <div class="pareto-trend">
+        <div class="pareto-trend-title">Units affected by month</div>
+        <canvas id="chart-pareto-trend" height="180"></canvas>
       </div>
-      <div class="chart-card">
-        <div class="section-title">Failures by Station</div>
-        <canvas id="chart-station" height="220"></canvas>
+      <div class="pareto-list-header">
+        <span>Top 5 FA cases</span>
+        <button id="btn-pareto-more" class="btn-reset" type="button">More</button>
       </div>
+      <div id="pareto-case-list" class="pareto-case-list"></div>
     </div>
 
     <!-- Table -->
@@ -709,6 +712,20 @@
 
     <div style="display:flex;gap:10px;padding:12px 18px;border-top:1px solid var(--border);">
       <button class="btn-reset" id="btn-failure-list-exit" style="flex:1">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- All FA case groups from the current filters -->
+<div id="modal-pareto-groups" class="modal-backdrop" style="display:none">
+  <div class="modal-card">
+    <div class="modal-header">
+      <span class="modal-title">FA Case Groups</span>
+      <button class="modal-close" id="btn-pareto-groups-close">✕</button>
+    </div>
+    <div id="pareto-groups-body" class="pareto-groups-body"></div>
+    <div style="display:flex;gap:10px;padding-top:12px;border-top:1px solid var(--border);">
+      <button class="btn-reset" id="btn-pareto-groups-exit" style="flex:1">Close</button>
     </div>
   </div>
 </div>
