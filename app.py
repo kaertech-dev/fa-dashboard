@@ -359,7 +359,18 @@ def data():
     try:
         conn = get_fa_conn()
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM fa.main_copy ORDER BY faendorse_datetime DESC")
+            cur.execute(
+                """
+                SELECT fa_records.*, fa_links.url
+                FROM fa.main_copy AS fa_records
+                LEFT JOIN (
+                    SELECT fa_case, MAX(link) AS url
+                    FROM fa.url
+                    GROUP BY fa_case
+                ) AS fa_links ON fa_links.fa_case = fa_records.fa_case
+                ORDER BY fa_records.faendorse_datetime DESC
+                """
+            )
             rows = cur.fetchall()
         conn.close()
         clean = []
