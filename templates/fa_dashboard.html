@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='css/failure_analysis.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/rework.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/return.css') }}">
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='images/kaertech_logo192.png') }}">
 <title>FA Dashboard</title>
 <!-- SheetJS for Excel export -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -132,11 +133,11 @@
         </div>
         <div class="filter-group">
           <label>Date From</label>
-          <input type="date" id="f-from">
+          <select id="f-from"><option value="">All Dates</option></select>
         </div>
         <div class="filter-group">
           <label>Date To</label>
-          <input type="date" id="f-to">
+          <select id="f-to"><option value="">All Dates</option></select>
         </div>
       </div>
       <div class="filter-actions">
@@ -170,7 +171,7 @@
 
     <!-- KPI cards -->
     <div class="kpi-row">
-      <div class="kpi-card red">  <div class="kpi-label">Total Failures</div><div class="kpi-val" id="kpi-total">–</div><div class="kpi-sub">serial numbers</div></div>
+      <div class="kpi-card red">  <div class="kpi-label">Total Failures</div><div class="kpi-val" id="kpi-total">–</div><div class="kpi-sub">Total Units Failed</div></div>
       <div class="kpi-card warn kpi-clickable"  data-status="1"><div class="kpi-label">Open FA</div>     <div class="kpi-val" id="kpi-open">–</div> <div class="kpi-sub">status = Open</div></div>
       <div class="kpi-card blue kpi-clickable"  data-status="2"><div class="kpi-label">In Progress</div> <div class="kpi-val" id="kpi-wip">–</div>  <div class="kpi-sub">status = WIP</div></div>
       <div class="kpi-card green kpi-clickable" data-status="4"><div class="kpi-label">Closed</div>      <div class="kpi-val" id="kpi-closed">–</div><div class="kpi-sub">status = Closed</div></div>
@@ -180,11 +181,11 @@
     <!-- Charts row 1: Product + Station -->
     <div class="charts-row">
       <div class="chart-card">
-        <div class="section-title">Failures by Product</div>
+        <div class="section-title">Failures by Product (by Month)</div>
         <canvas id="chart-product" height="220"></canvas>
       </div>
       <div class="chart-card">
-        <div class="section-title">Failures by Station</div>
+        <div class="section-title">Failures by Station (by Month)</div>
         <canvas id="chart-station" height="220"></canvas>
       </div>
     </div>
@@ -272,12 +273,12 @@
     <div style="display:flex;gap:12px">
       <div class="field" style="flex:1">
         <label>PRODUCT</label>
-        <select id="endorsement-product" disabled><option value="">Select…</option></select>
+        <select id="endorsement-product" disabled><option value="">Auto Shown Product</option></select>
         <div style="font-size:.72rem;color:var(--muted);margin-top:2px">Active customer</div>
       </div>
       <div class="field" style="flex:1">
         <label>MODEL</label>
-        <select id="endorsement-model" disabled><option value="">Select a product first…</option></select>
+        <select id="endorsement-model" disabled><option value="">Auto shown model</option></select>
       </div>
       <div class="field" style="flex:1">
         <label>STATION</label>
@@ -335,6 +336,11 @@
     <div class="modal-header">
       <span class="modal-title">FAILURE ANALYSIS</span>
       <button class="modal-close" id="btn-fa-close">✕</button>
+    </div>
+
+    <div class="field">
+      <label>FA DOCUMENT URL</label>
+      <input type="url" id="fa-document-url" placeholder="https://...">
     </div>
 
     <div style="display:flex;gap:12px">

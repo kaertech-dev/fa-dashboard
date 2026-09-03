@@ -312,7 +312,16 @@ textarea:focus { border-color: var(--accent3); }
 .btn-lookup:hover { border-color: var(--accent3); color: var(--accent3); }
 
 /* select disabled state */
-select:disabled { opacity: .5; cursor: not-allowed; }
+select:disabled {     width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    color: var(--text);
+    font-size: .95rem;
+    outline: none;
+    transition: border .2s;
+}
 
 /* MODAL */
 .modal-backdrop {

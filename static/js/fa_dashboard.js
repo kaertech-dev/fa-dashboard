@@ -131,17 +131,20 @@ document.getElementById('btn-logout').addEventListener('click', () => {
 
 // ── RESTORE LOGIN AFTER PAGE REFRESH ─────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-    const savedUser  = localStorage.getItem('fa_user');
-    const savedGroup = localStorage.getItem('fa_group') || '';
+  const savedUser  = localStorage.getItem('fa_user');
+  const savedGroup = localStorage.getItem('fa_group') || '';
 
-    if (savedUser) {
-        document.getElementById('user-label').textContent = savedUser;
-        applyGroupAccess(savedGroup);
-        document.getElementById('login-screen').style.display = 'none';
-        document.getElementById('dashboard-screen').style.display = 'block';
+  if (savedUser) {
+    document.getElementById('user-label').textContent = savedUser;
+    applyGroupAccess(savedGroup);
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('dashboard-screen').style.display = 'block';
 
-        await loadAndRender();
-    }
+    await loadAndRender();
+
+    // Start refreshing only after the initial data has loaded
+    startAutoRefresh();
+  }
 });
 
 // ── CHANGE PASSWORD MODAL ─────────────────────────────────────────────────────
@@ -243,24 +246,175 @@ async function loadAndRender() {
     loader(false);
   }
 }
-// ── FILTERS ───────────────────────────────────────────────────────────────────
-function populateFilters() {
-  fillSelect('f-product', [...new Set(allData.map(r=>r.product).filter(Boolean))].sort());
-  fillSelect('f-model',   [...new Set(allData.map(r=>r.model).filter(Boolean))].sort());
-  fillSelect('f-station', [...new Set(allData.map(r=>r.station).filter(Boolean))].sort());
+// ================refresh web page=============
+let refreshTimer = null;
+let isRefreshing = false;
+
+async function refreshData() {
+  // Prevent overlapping API requests
+  if (isRefreshing) return;
+
+  isRefreshing = true;
+
+  try {
+    const res = await fetch('/api/data', {
+      cache: 'no-store'
+    });
+
+    if (!res.ok) {
+      throw new Error(`Server returned HTTP ${res.status}`);
+    }
+
+    const json = await res.json();
+
+    if (!json.ok) {
+      throw new Error(json.error || 'Failed to refresh data.');
+    }
+
+    // Replace the data with the latest server data
+    allData = Array.isArray(json.rows) ? json.rows : [];
+
+    // IMPORTANT:
+    // Do NOT reset page = 1 here.
+    // Do NOT reset the user's filters.
+    refreshCascadingFilters();
+    applyFilters();
+
+  } catch (e) {
+    console.error('[FA Dashboard] Auto-refresh failed:', e);
+  } finally {
+    isRefreshing = false;
+  }
 }
 
-function fillSelect(id, vals) {
+function startAutoRefresh() {
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+  }
+
+  refreshTimer = setInterval(refreshData, 5000);
+}
+
+// ── FILTERS ───────────────────────────────────────────────────────────────────
+function populateFilters() {
+  refreshCascadingFilters();
+}
+
+function fillSelect(id, vals, selectedValue = '') {
   const sel = document.getElementById(id);
   while (sel.options.length > 1) sel.remove(1);
   vals.forEach(v => sel.add(new Option(v, v)));
+  sel.value = vals.includes(selectedValue) ? selectedValue : '';
 }
+
+function getAvailableDates(rows) {
+  return [...new Set(rows
+    .map(record => {
+      const value = record.faendorse_datetime;
+      if (!value) return null;
+      const dateStr = String(value).trim();
+      return dateStr.slice(0, 10) || null;
+    })
+    .filter(Boolean))].sort((a,b) => b.localeCompare(a));
+}
+
+function refreshDateFilters(baseRows = allData) {
+  const fromSelect = document.getElementById('f-from');
+  const toSelect = document.getElementById('f-to');
+  const currentFrom = fromSelect.value;
+  const currentTo = toSelect.value;
+
+  const availableDates = getAvailableDates(baseRows);
+
+  const validFrom = currentFrom && availableDates.includes(currentFrom)
+    ? currentFrom
+    : '';
+  const validTo = currentTo && availableDates.includes(currentTo)
+    ? currentTo
+    : '';
+
+  const fromOptions = availableDates.filter(date => !validTo || date <= validTo);
+  const toOptions = availableDates.filter(date => !validFrom || date >= validFrom);
+
+  fillSelect('f-from', fromOptions, validFrom);
+  fillSelect('f-to', toOptions, validTo);
+
+  const finalFrom = document.getElementById('f-from').value;
+  const finalTo = document.getElementById('f-to').value;
+
+  if (finalFrom && finalTo && finalFrom > finalTo) {
+    document.getElementById('f-to').value = finalFrom;
+  }
+}
+
+function refreshCascadingFilters() {
+  const productSelect = document.getElementById('f-product');
+  const modelSelect = document.getElementById('f-model');
+  const stationSelect = document.getElementById('f-station');
+  const product = productSelect.value;
+  const model = modelSelect.value;
+
+  const products = [...new Set(allData.map(record => record.product).filter(Boolean))].sort();
+  fillSelect('f-product', products, product);
+
+  const productRows = product
+    ? allData.filter(record => record.product === product)
+    : allData;
+  const models = [...new Set(productRows.map(record => record.model).filter(Boolean))].sort();
+  fillSelect('f-model', models, model);
+
+  const modelRows = model && models.includes(model)
+    ? productRows.filter(record => record.model === model)
+    : productRows;
+  const stations = [...new Set(modelRows.map(record => record.station).filter(Boolean))].sort();
+  fillSelect('f-station', stations, stationSelect.value);
+
+  const stationRows = stationSelect.value && stations.includes(stationSelect.value)
+    ? modelRows.filter(record => record.station === stationSelect.value)
+    : modelRows;
+
+  refreshDateFilters(stationRows);
+}
+
+document.getElementById('f-product').addEventListener('change', () => {
+  document.getElementById('f-model').value = '';
+  document.getElementById('f-station').value = '';
+  refreshCascadingFilters();
+});
+document.getElementById('f-model').addEventListener('change', () => {
+  document.getElementById('f-station').value = '';
+  refreshCascadingFilters();
+});
+document.getElementById('f-station').addEventListener('change', () => {
+  refreshCascadingFilters();
+});
+document.getElementById('f-from').addEventListener('change', () => {
+  const fromValue = document.getElementById('f-from').value;
+  const toValue = document.getElementById('f-to').value;
+
+  if (fromValue && toValue && fromValue > toValue) {
+    document.getElementById('f-to').value = fromValue;
+  }
+
+  refreshCascadingFilters();
+});
+document.getElementById('f-to').addEventListener('change', () => {
+  const fromValue = document.getElementById('f-from').value;
+  const toValue = document.getElementById('f-to').value;
+
+  if (fromValue && toValue && fromValue > toValue) {
+    document.getElementById('f-from').value = toValue;
+  }
+
+  refreshCascadingFilters();
+});
 
 document.getElementById('btn-apply').addEventListener('click',  () => { page=1; applyFilters(); });
 document.getElementById('btn-reset').addEventListener('click',  () => {
   ['f-product','f-model','f-station','f-status'].forEach(id => document.getElementById(id).value='');
   document.getElementById('f-from').value = '';
   document.getElementById('f-to').value   = '';
+  refreshCascadingFilters();
   page=1; applyFilters();
 });
 
@@ -272,6 +426,14 @@ function applyFilters() {
   const from   = document.getElementById('f-from').value;
   const to     = document.getElementById('f-to').value;
 
+  const hasDateFilter = Boolean(from || to);
+
+  if (!hasDateFilter) {
+    filteredData = [];
+    renderKPIs(); renderCharts(); renderTable();
+    return;
+  }
+  
   filteredData = allData.filter(r => {
     if (prod   && r.product  !== prod)   return false;
     if (model  && r.model    !== model)  return false;
@@ -292,6 +454,7 @@ function applyFilters() {
     }
     return true;
   });
+  
   renderKPIs(); renderCharts(); renderTable();
 }
 
@@ -339,6 +502,98 @@ function countBy(arr, key) {
   return Object.entries(map).sort((a,b)=>b[1]-a[1]).slice(0,12);
 }
 
+function countByDateAndCategory(arr, key) {
+  const map = {};
+
+  arr.forEach(record => {
+    const date = String(record.faendorse_datetime || '').slice(0, 10);
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+
+    const category = String(record[key] || 'Unknown').trim() || 'Unknown';
+    const label = `${date} | ${category}`;
+
+    map[label] = (map[label] || 0) + 1;
+  });
+
+  return Object.entries(map)
+    .sort((a, b) => {
+      const [aDate, aCategory] = a[0].split(' | ');
+      const [bDate, bCategory] = b[0].split(' | ');
+
+      if (aDate === bDate) {
+        return b[1] - a[1] || aCategory.localeCompare(bCategory);
+      }
+
+      return aDate.localeCompare(bDate);
+    })
+    .slice(0, 12);
+}
+
+function formatChartLabel(label) {
+  const value = String(label || '');
+
+  if (!value.includes(' | ')) {
+    return value;
+  }
+
+  // Keep category in the underlying label,
+  // but display DATE ONLY on the chart.
+  const [date] = value.split(' | ');
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    const [year, month, day] = date.split('-');
+    return `${month}/${day}/${year}`;
+  }
+
+  return date;
+}
+
+function parseChartLabel(label) {
+  const text = String(label || '').trim();
+
+  if (!text.includes(' | ')) {
+    return {
+      date: text,
+      category: ''
+    };
+  }
+
+  const [date, category] = text.split(' | ');
+
+  return {
+    date: (date || '').trim(),
+    category: (category || '').trim()
+  };
+}
+
+function showChartMatches(chartKey, label) {
+  const { date, category } = parseChartLabel(label);
+
+  if (!date || !category) return;
+
+  const matches = filteredData.filter(record => {
+    const recordDate = String(record.faendorse_datetime || '').slice(0, 10);
+
+    if (recordDate !== date) return false;
+
+    const recordValue =
+      String(record[chartKey] || 'Unknown').trim() || 'Unknown';
+
+    return recordValue === category;
+  });
+
+  const titleMap = {
+    product: 'Product',
+    station: 'Station'
+  };
+
+  renderFailureList(
+    `${titleMap[chartKey] || 'Category'} — ${formatChartLabel(date)} (${category})`,
+    matches
+  );
+}
+
 function drawBarChart(canvasId, entries, options = {}) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
@@ -349,6 +604,7 @@ function drawBarChart(canvasId, entries, options = {}) {
   canvas.height = H * dpr;
   canvas.style.width  = W + 'px';
   canvas.style.height = H + 'px';
+  canvas.style.cursor = entries.length ? 'pointer' : 'default';
 
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
@@ -400,7 +656,7 @@ function drawBarChart(canvasId, entries, options = {}) {
     ctx.fillText(val, x + barW/2, y - 4);
 
     // X label rotated
-    const lbl = label.length > 10 ? label.slice(0,9)+'…' : label;
+    const lbl = formatChartLabel(label);
     ctx.save();
     ctx.translate(x + barW/2, PAD_T + chartH + 8);
     ctx.rotate(-0.48);
@@ -408,6 +664,26 @@ function drawBarChart(canvasId, entries, options = {}) {
     ctx.fillText(lbl, 0, 0);
     ctx.restore();
   });
+
+  if (options.chartKey) {
+    canvas.onclick = event => {
+      const rect = canvas.getBoundingClientRect();
+      const clickX = event.clientX - rect.left;
+      const clickY = event.clientY - rect.top;
+
+      for (let i = 0; i < entries.length; i++) {
+        const [label, val] = entries[i];
+        const x = PAD_L + gap + i * (barW + gap);
+        const bH = (val / maxVal) * chartH;
+        const y = PAD_T + chartH - bH;
+
+        if (clickX >= x && clickX <= x + barW && clickY >= y && clickY <= PAD_T + chartH) {
+          showChartMatches(options.chartKey, label);
+          return;
+        }
+      }
+    };
+  }
 }
 
 // Horizontal bar chart — better for many categories with long names
@@ -485,9 +761,20 @@ function drawHBarChart(canvasId, entries) {
 }
 
 function renderCharts() {
-  drawBarChart('chart-product', countBy(filteredData, 'product'));
-  drawBarChart('chart-station', countBy(filteredData, 'station'));
+  drawBarChart(
+    'chart-product',
+    countByDateAndCategory(filteredData, 'product'),
+    { chartKey: 'product' }
+  );
+
+  drawBarChart(
+    'chart-station',
+    countByDateAndCategory(filteredData, 'station'),
+    { chartKey: 'station' }
+  );
+
   drawHBarChart('chart-defect-cat', countBy(filteredData, 'defect_cat'));
+
   renderPareto();
 }
 
@@ -666,8 +953,16 @@ document.getElementById('btn-prev').addEventListener('click', () => { if(page>1)
 document.getElementById('btn-next').addEventListener('click', () => { if(page*PAGE_SIZE<filteredData.length){page++;renderTable();} });
 
 function renderTable() {
-  const start = (page-1)*PAGE_SIZE;
-  const slice = filteredData.slice(start, start+PAGE_SIZE);
+  const total = filteredData.length;
+  const maxPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  // Prevent current page from exceeding available pages
+  if (page > maxPage) {
+    page = maxPage;
+  }
+
+  const start = (page - 1) * PAGE_SIZE;
+  const slice = filteredData.slice(start, start + PAGE_SIZE);
   const dateCol = v => v ? `<span style="color:var(--muted)">${escapeHtml(String(v).slice(0,10))}</span>` : '–';
   document.getElementById('table-body').innerHTML = slice.map((r,i) => `
     <tr data-record-index="${start + i}" title="Click to view failure details">
@@ -705,7 +1000,6 @@ function renderTable() {
       }
     });
   });
-  const total = filteredData.length;
   const end   = Math.min(start+PAGE_SIZE, total);
   document.getElementById('page-info').textContent = total
     ? `${start+1}–${end} of ${total.toLocaleString()} records`

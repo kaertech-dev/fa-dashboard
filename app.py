@@ -4,7 +4,7 @@ from functools import wraps
 from flask import Flask, request, jsonify, render_template, session, redirect
 from functions import (
     get_fa_conn, authenticate, hash_badge,
-    get_fa_by_serial, get_distinct_values, update_fa, update_rework,
+    get_fa_by_serial, get_fa_url, save_fa_url, get_distinct_values, update_fa, update_rework,
     create_or_update_endorsement,
 )
 from active_customer import ActiveProjects, StationLog
@@ -184,6 +184,7 @@ def fa_lookup(serial_num):
             k: (str(v) if v is not None and not isinstance(v, (int, float, str, bool)) else v)
             for k, v in row.items()
         }
+        clean["url"] = get_fa_url(clean.get("fa_case"))
         return jsonify({"ok": True, "row": clean})
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
@@ -205,12 +206,15 @@ def update_fa_route():
     data = request.get_json(silent=True)
     serial_num = data.get("serial_num", "").strip()
     fa_class   = str(data.get("fa_class", "")).strip()
+    document_url = data.get("document_url", "").strip()
     faended_datetime = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     if not serial_num:
         return jsonify({"ok": False, "error": "Serial number is required."})
     if fa_class not in ("1", "2", "3", "4"):
         return jsonify({"ok": False, "error": "FA Class must be 1, 2, 3, or 4."})
+    if document_url and not document_url.lower().startswith(("http://", "https://")):
+        return jsonify({"ok": False, "error": "Document URL must start with http:// or https://."})
 
     fields = {
         "failure_cause":   data.get("failure_cause", "").strip(),
@@ -227,6 +231,8 @@ def update_fa_route():
         if row is None:
             return jsonify({"ok": False, "error": "Serial number not found."})
         update_fa(serial_num, fields)
+        updated_row = get_fa_by_serial(serial_num)
+        save_fa_url(updated_row["fa_case"], document_url)
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})

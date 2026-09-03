@@ -39,8 +39,8 @@ function resetEndorsementForm() {
   endorserInput.value = localStorage.getItem('fa_user_num') || '';
   endorserInput.readOnly = true;
 
-  resetEndorsementSelect('endorsement-product', 'Select…', true);
-  resetEndorsementSelect('endorsement-model', 'Select a product first…', true);
+  resetEndorsementSelect('endorsement-product', 'Auto Shown Product', true);
+  resetEndorsementSelect('endorsement-model', 'Auto shown model…', true);
 }
 
 function resetEndorsementSelect(id, placeholder, disabled) {

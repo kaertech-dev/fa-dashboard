@@ -75,6 +75,41 @@ def get_fa_by_serial(serial_num: str):
         conn.close()
     return row
 
+def get_fa_url(fa_case: str):
+    """Return the document link stored for an FA case, if one exists."""
+    if not fa_case:
+        return None
+    conn = get_fa_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT link FROM fa.url WHERE fa_case = %s "
+                "AND link IS NOT NULL AND link <> '' ORDER BY id DESC LIMIT 1",
+                (fa_case,),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    return row["link"] if row else None
+
+def save_fa_url(fa_case: str, link: str):
+    """Update the document link for an FA case, or create it when missing."""
+    if not fa_case:
+        return False
+    conn = get_fa_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM fa.url WHERE fa_case = %s ORDER BY id DESC LIMIT 1", (fa_case,))
+            row = cur.fetchone()
+            if row:
+                cur.execute("UPDATE fa.url SET link = %s WHERE fa_case = %s", (link or None, fa_case))
+            elif link:
+                cur.execute("INSERT INTO fa.url (fa_case, link) VALUES (%s, %s)", (fa_case, link))
+            conn.commit()
+    finally:
+        conn.close()
+    return True
+
 def get_distinct_values(column: str, limit: int = 200):
     """Return distinct non-empty values for a whitelisted column (dropdown options)."""
     allowed = {

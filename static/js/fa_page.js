@@ -21,6 +21,7 @@ function resetFaForm() {
   document.getElementById('fa-serial').value = '';
   document.getElementById('fa-datetime').value = '';
   document.getElementById('fa-text-display').textContent = 'Scan a serial number to load UUT details…';
+  document.getElementById('fa-document-url').value = '';
   FAPAGE_TEXT_FIELDS.forEach(id => document.getElementById(id).value = '');
   FAPAGE_SELECT_FIELDS.forEach(id => document.getElementById(id).value = '');
   document.getElementById('fa-pic').value = '';
@@ -93,6 +94,7 @@ async function scanFaSerial() {
     const r = json.row;
 
     document.getElementById('fa-datetime').value = formatDate(r.faendorse_datetime);
+    document.getElementById('fa-document-url').value = r.url || '';
     document.getElementById('fa-text-display').textContent =
     `UUT DETAILS:
 
@@ -141,6 +143,7 @@ document.getElementById('btn-fa-submit').addEventListener('click', async () => {
     proposed_action: document.getElementById('fa-proposed-action').value.trim(),
     defect_cat:      document.getElementById('fa-defect-cat').value,
     fa_class:        faClass,
+    document_url:    document.getElementById('fa-document-url').value.trim(),
   };
 
   const res  = await fetch('/api/failure_analysis/update', {
