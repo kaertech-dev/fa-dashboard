@@ -92,6 +92,10 @@
           </button>
           <div class="user-menu-divider"></div>
           <div class="user-menu-section-label">Account</div>
+          <button class="user-menu-item" id="btn-settings">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.5"/><path d="M8 2v2M8 12v2M3 8H1M14 8h2M4.6 4.6l-1.4-1.4M12.8 12.8l1.4 1.4M4.6 11.4l-1.4 1.4M12.8 3.2l1.4-1.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            Settings
+          </button>
           <button class="user-menu-item" id="btn-change-pass">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
             Change Password
@@ -273,17 +277,23 @@
     <div style="display:flex;gap:12px">
       <div class="field" style="flex:1">
         <label>PRODUCT</label>
-        <select id="endorsement-product" disabled><option value="">Auto Shown Product</option></select>
+        <select id="endorsement-product" disabled style="display:block"><option value="">Auto Shown Product</option></select>
+        <input type="text" id="endorsement-product-input" list="endorsement-product-list" 
+          placeholder="Enter product name" style="display:none;width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border,#d1d5db);box-sizing:border-box">
+        <datalist id="endorsement-product-list"></datalist>
         <div style="font-size:.72rem;color:var(--muted);margin-top:2px">Active customer</div>
       </div>
       <div class="field" style="flex:1">
         <label>MODEL</label>
-        <select id="endorsement-model" disabled><option value="">Auto shown model</option></select>
+        <select id="endorsement-model" disabled style="display:block"><option value="">Auto shown model</option></select>
+        <input type="text" id="endorsement-model-input" list="endorsement-model-list"
+          placeholder="Enter model name" style="display:none;width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border,#d1d5db);box-sizing:border-box">
+        <datalist id="endorsement-model-list"></datalist>
       </div>
       <div class="field" style="flex:1">
         <label>STATION</label>
         <input type="text" id="endorsement-station" list="endorsement-station-list"
-          placeholder="Auto-filled from last log — editable" required>
+          placeholder="Auto-filled from last log — editable" required readonly>
         <datalist id="endorsement-station-list"></datalist>
       </div>
     </div>
@@ -293,12 +303,21 @@
         <label>SERIAL NUMBER</label>
         <input type="text" id="endorsement-serial" placeholder="Scan or type serial number">
       </div>
-      <div class="field" style="flex:1">
-        <label>ENDORSER</label>
-        <div style="display:flex;gap:6px">
-          <input type="text" id="endorsement-endorser" placeholder="Endorser employee number" readonly style="flex:1">
-          <button type="button" class="btn-reset" id="btn-endorsement-endorser-change">Change</button>
-        </div>
+      <!-- <div class="field" style="flex:1">
+        <label>STATUS (TBD)</label>
+        <select id="endorsement-status">
+          <option value="">Select status</option>
+          <option value="In Process">In Process</option>
+          <option value="RMA">RMA</option>
+        </select>
+      </div> -->
+    </div>
+
+    <div class="field">
+      <label>ENDORSER</label>
+      <div style="display:flex;gap:6px">
+        <input type="text" id="endorsement-endorser" placeholder="Endorser employee number" readonly style="flex:1">
+        <button type="button" class="btn-reset" id="btn-endorsement-endorser-change">Change</button>
       </div>
     </div>
 
@@ -525,6 +544,57 @@
     </div>
     <div id="chpass-error" style="color:var(--danger);font-size:.83rem;min-height:18px;margin-bottom:4px"></div>
     <button class="btn-apply" id="btn-chpass-submit" style="width:100%;margin-top:4px">Update Badge</button>
+  </div>
+</div>
+<!-- ── SETTINGS MODAL (Holidays & Meetings) ── -->
+<div id="modal-settings" class="modal-backdrop" style="display:none">
+  <div class="modal-card" style="max-width:600px">
+    <div class="modal-header">
+      <span class="modal-title">Settings: Hide Data (Holidays & Meetings)</span>
+      <button class="modal-close" id="btn-settings-close">✕</button>
+    </div>
+
+    <div class="field">
+      <label>Reason</label>
+      <select id="settings-hide-reason">
+        <option value="">Select reason</option>
+        <option value="Meeting">Meeting</option>
+        <option value="Holiday">Holiday</option>
+      </select>
+    </div>
+
+    <div style="display:flex;gap:12px;margin-top:8px">
+      <div class="field" style="flex:1">
+        <label>Date From</label>
+        <select id="settings-date-from"><option value="">Select date</option></select>
+      </div>
+      <div class="field" style="flex:1">
+        <label>Date To</label>
+        <select id="settings-date-to"><option value="">Select date</option></select>
+      </div>
+    </div>
+    <div style="font-size:.72rem;color:var(--muted);margin-top:4px;margin-bottom:8px">
+      ℹ️ Weekends (Sat/Sun) are automatically excluded. Only holidays and meetings can be added.
+    </div>
+
+    <div class="field" id="settings-auth-person-field" style="display:none">
+      <label>Authorized Person (Admin only)</label>
+      <input type="text" id="settings-auth-person" placeholder="Employee number (leave blank for self)">
+      <div style="font-size:.72rem;color:var(--muted);margin-top:2px">Leave blank to mark for yourself</div>
+    </div>
+
+    <button class="btn-apply" id="btn-settings-add" style="width:100%;margin-top:4px">Add Hide Date</button>
+
+    <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
+      <div style="font-weight:600;margin-bottom:8px">Hidden Dates:</div>
+      <div id="settings-hidden-list" style="font-size:.85rem;max-height:200px;overflow-y:auto">
+        <div style="color:var(--muted)">No hidden dates yet</div>
+      </div>
+    </div>
+
+    <div id="settings-error" style="color:var(--danger);font-size:.83rem;min-height:18px;margin-bottom:4px;margin-top:8px"></div>
+
+    <button class="btn-reset" id="btn-settings-close-btn" style="width:100%;margin-top:4px">Close</button>
   </div>
 </div>
 <!-- ── FAILURE RECORD DETAIL MODAL ── -->

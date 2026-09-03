@@ -32,6 +32,7 @@ function resetEndorsementForm() {
   document.getElementById('endorsement-station-list').innerHTML = '';
   document.getElementById('endorsement-failure-mode').value = '';
   document.getElementById('endorsement-po').value = '';
+  // document.getElementById('endorsement-status').value = '';
   document.getElementById('endorsement-text-display').textContent =
     'Please enter the employee number of the endorser.';
 
@@ -39,8 +40,44 @@ function resetEndorsementForm() {
   endorserInput.value = localStorage.getItem('fa_user_num') || '';
   endorserInput.readOnly = true;
 
+  // Reset to read-only mode (normal)
+  setEndorsementOfflineMode(false);
   resetEndorsementSelect('endorsement-product', 'Auto Shown Product', true);
   resetEndorsementSelect('endorsement-model', 'Auto shown model…', true);
+}
+
+function setEndorsementOfflineMode(isOffline) {
+  const productSelect = document.getElementById('endorsement-product');
+  const productInput = document.getElementById('endorsement-product-input');
+  const modelSelect = document.getElementById('endorsement-model');
+  const modelInput = document.getElementById('endorsement-model-input');
+  const stationInput = document.getElementById('endorsement-station');
+  const textDisplay = document.getElementById('endorsement-text-display');
+
+  if (isOffline) {
+    // Show text inputs, hide selects
+    productSelect.style.display = 'none';
+    productInput.style.display = 'block';
+    productInput.readOnly = false;
+    
+    modelSelect.style.display = 'none';
+    modelInput.style.display = 'block';
+    modelInput.readOnly = false;
+    
+    stationInput.readOnly = false;
+    textDisplay.textContent = 'OFFLINE MODE - SERIAL NOT FOUND IN DATABASE\n\nProduct, Model, and Station are editable. Fill in the details and press "Endorse to FA".';
+  } else {
+    // Show selects, hide text inputs
+    productSelect.style.display = 'block';
+    productInput.style.display = 'none';
+    productInput.value = '';
+    
+    modelSelect.style.display = 'block';
+    modelInput.style.display = 'none';
+    modelInput.value = '';
+    
+    stationInput.readOnly = true;
+  }
 }
 
 function resetEndorsementSelect(id, placeholder, disabled) {
@@ -127,11 +164,22 @@ function fillEndorsementSelect(id, items) {
   const sel = document.getElementById(id);
   const current = sel.value;
   while (sel.options.length > 1) sel.remove(1);
+  
+  const datalistId = id === 'endorsement-product' ? 'endorsement-product-list' : 
+                     id === 'endorsement-model' ? 'endorsement-model-list' : null;
+  const datalist = datalistId ? document.getElementById(datalistId) : null;
+  if (datalist) datalist.innerHTML = '';
+  
   (items || []).forEach(item => {
-    if (item && typeof item === 'object') {
-      sel.add(new Option(item.name, item.id));
-    } else {
-      sel.add(new Option(item, item));
+    const displayValue = (item && typeof item === 'object') ? item.name : item;
+    const actualValue = (item && typeof item === 'object') ? item.id : item;
+    
+    sel.add(new Option(displayValue, actualValue));
+    
+    if (datalist) {
+      const opt = document.createElement('option');
+      opt.value = displayValue;
+      datalist.appendChild(opt);
     }
   });
   if (current) sel.value = current;
@@ -218,28 +266,24 @@ You can review/update the details (Station is editable) and endorse again.`;
       return;
     }
 
-    if (!logJson.found) {
-      document.getElementById('endorsement-text-display').textContent =
-        'New serial number — no station log found either.\nFill in the details below and press "Endorse to FA".';
-      return;
-    }
+    if (logJson.found) {
+      // Station log found — prefill the data
+      const log = logJson.log;
+      document.getElementById('endorsement-station').value = log.station || '';
+      document.getElementById('endorsement-failure-mode').value = log.remarks || '';
 
-    const log = logJson.log;
-    document.getElementById('endorsement-station').value = log.station || '';
-    document.getElementById('endorsement-failure-mode').value = log.remarks || '';
-
-    if (log.product) {
-      ensureEndorsementOption('endorsement-product', log.product);
-      document.getElementById('endorsement-product').value = log.product;
-      await loadEndorsementModels(log.product);
-      if (log.model) {
-        ensureEndorsementOption('endorsement-model', log.model);
-        document.getElementById('endorsement-model').value = log.model;
-        await loadEndorsementStationSuggestions(log.product, log.model);
+      if (log.product) {
+        ensureEndorsementOption('endorsement-product', log.product);
+        document.getElementById('endorsement-product').value = log.product;
+        await loadEndorsementModels(log.product);
+        if (log.model) {
+          ensureEndorsementOption('endorsement-model', log.model);
+          document.getElementById('endorsement-model').value = log.model;
+          await loadEndorsementStationSuggestions(log.product, log.model);
+        }
       }
-    }
 
-    document.getElementById('endorsement-text-display').textContent =
+      document.getElementById('endorsement-text-display').textContent =
 `LAST STATION LOG FOUND:
 
 Product: ${log.product || '–'}
@@ -248,7 +292,17 @@ Station: ${log.station || '–'}
 Log Date & Time: ${formatEndorsementDate(log.log_datetime)}
 Remarks: ${log.remarks || '–'}
 
-Review the details (Station is editable) and press "Endorse to FA".`;
+The details are auto-filled. You can review and press "Endorse to FA".`;
+      return;
+    }
+
+    // Not found in station logs either — OFFLINE mode: enable manual input
+    setEndorsementOfflineMode(true);
+    document.getElementById('endorsement-product').value = '';
+    document.getElementById('endorsement-model').value = '';
+    document.getElementById('endorsement-station').value = '';
+    document.getElementById('endorsement-failure-mode').value = '';
+
   } catch (e) {
     err.textContent = 'Could not reach server: ' + e.message;
   }
@@ -267,15 +321,24 @@ document.getElementById('btn-endorsement-submit').addEventListener('click', asyn
   err.textContent = '';
 
   const serial   = document.getElementById('endorsement-serial').value.trim();
-  const product  = document.getElementById('endorsement-product').value;
-  const model    = document.getElementById('endorsement-model').value;
+  
+  // Get product from either select (normal) or text input (offline)
+  const productSelect = document.getElementById('endorsement-product');
+  const productInput = document.getElementById('endorsement-product-input');
+  const product = productSelect.style.display !== 'none' ? productSelect.value : productInput.value.trim();
+  
+  // Get model from either select (normal) or text input (offline)
+  const modelSelect = document.getElementById('endorsement-model');
+  const modelInput = document.getElementById('endorsement-model-input');
+  const model = modelSelect.style.display !== 'none' ? modelSelect.value : modelInput.value.trim();
+  
   const station  = document.getElementById('endorsement-station').value.trim();
   const endorser = document.getElementById('endorsement-endorser').value.trim();
   const failMode = document.getElementById('endorsement-failure-mode').value.trim();
 
   if (!serial)   { err.textContent = 'Please scan or type a serial number.'; return; }
-  if (!product)  { err.textContent = 'Please select a product.'; return; }
-  if (!model)    { err.textContent = 'Please select a model.'; return; }
+  if (!product)  { err.textContent = 'Please select or enter a product.'; return; }
+  if (!model)    { err.textContent = 'Please select or enter a model.'; return; }
   if (!station)  { err.textContent = 'Please enter a station.'; return; }
   if (!endorser) { err.textContent = 'Please enter the employee number of the endorser.'; return; }
   if (!failMode) { err.textContent = 'Please describe the failure mode.'; return; }
@@ -288,6 +351,7 @@ document.getElementById('btn-endorsement-submit').addEventListener('click', asyn
     po_num:        document.getElementById('endorsement-po').value.trim(),
     test_failure:  failMode,
     prod_endorser: endorser,
+    // status:        document.getElementById('endorsement-status').value.trim() || null,
   };
 
   const res  = await fetch('/api/endorsement/update', {

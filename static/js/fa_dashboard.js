@@ -4,6 +4,42 @@ let allData = [], filteredData = [], page = 1;
 const PAGE_SIZE = 50;
 const COLORS = ['#f78166','#79c0ff','#56d364','#d29922','#bc8cff','#58a6ff','#ff7b72','#39d353','#ffa657','#a5d6ff'];
 
+function refreshSettingsDateFilters() {
+  const baseRows = allData;
+  const availableDates = getAvailableDates(baseRows);
+  
+  // Filter out weekends - only show weekdays
+  const weekdayDates = availableDates.filter(date => !isWeekend(date));
+  
+  const fromSel = document.getElementById('settings-date-from');
+  const toSel = document.getElementById('settings-date-to');
+  const currentFrom = fromSel.value;
+  const currentTo = toSel.value;
+  
+  // Rebuild "from" dropdown
+  fromSel.innerHTML = '<option value="">Select date</option>';
+  weekdayDates.forEach(date => {
+    const opt = document.createElement('option');
+    opt.value = date;
+    opt.textContent = date;
+    fromSel.appendChild(opt);
+  });
+  fromSel.value = currentFrom;
+  
+  // Rebuild "to" dropdown, constraining based on "from" selection
+  const fromDate = currentFrom ? new Date(currentFrom) : null;
+  toSel.innerHTML = '<option value="">Select date</option>';
+  weekdayDates.forEach(date => {
+    if (!fromDate || new Date(date) >= fromDate) {
+      const opt = document.createElement('option');
+      opt.value = date;
+      opt.textContent = date;
+      toSel.appendChild(opt);
+    }
+  });
+  toSel.value = currentTo;
+}
+
 // ── UTILS ─────────────────────────────────────────────────────────────────────
 const loader = on => document.getElementById('loader').classList.toggle('on', on);
 function escapeHtml(v) {
@@ -32,7 +68,59 @@ function statusTag(v) {
   return `<span class="tag" style="opacity:.4">–</span>`;
 }
 
-// ── USER MENU DROPDOWN ────────────────────────────────────────────────────────
+// ── DATA HIDING (Weekends, Lunch, Meetings, Holidays) ───────────────────────
+function isWeekend(dateStr) {
+  const date = new Date(dateStr + 'T00:00:00');
+  const day = date.getDay();
+  return day === 0 || day === 6;
+}
+
+function isLunchTime(datetimeStr) {
+  if (!datetimeStr) return false;
+  const time = String(datetimeStr).slice(11, 16);
+  if (!time) return false;
+  const [hh, mm] = time.split(':').map(Number);
+  const minutes = hh * 60 + mm;
+  const lunchStart = 11 * 60;
+  const lunchEnd = 13 * 60;
+  return minutes >= lunchStart && minutes < lunchEnd;
+}
+
+function getHolidaysAndMeetings() {
+  try {
+    return JSON.parse(localStorage.getItem('fa_holidays_meetings') || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function isHolidayOrMeeting(dateStr) {
+  const holidays = getHolidaysAndMeetings();
+  return holidays.some(entry => entry.date === dateStr);
+}
+
+function shouldHideRecord(record) {
+  if (!record.faendorse_datetime) return false;
+  const dateStr = String(record.faendorse_datetime).slice(0, 10);
+  const isAdmin = (localStorage.getItem('fa_group') || '').toUpperCase() === 'ADMIN';
+
+  const holidays = getHolidaysAndMeetings();
+  const userNum = String(localStorage.getItem('fa_user_num') || '').trim();
+  const hasConfiguredHide = holidays.some(entry => {
+    const authorizedPerson = String(entry.authorizedPerson || '').trim();
+    return entry.date === dateStr && (!authorizedPerson || authorizedPerson === userNum);
+  });
+
+  // Explicit holiday/meeting assignments apply even when the viewer is an admin.
+  if (hasConfiguredHide) return true;
+
+  if (!isAdmin) {
+    if (isWeekend(dateStr) || isLunchTime(record.faendorse_datetime)) return true;
+  }
+  return false;
+}
+
+
 document.getElementById('user-menu-btn').addEventListener('click', e => {
   e.stopPropagation();
   document.getElementById('user-menu-dropdown').classList.toggle('open');
@@ -155,6 +243,117 @@ document.getElementById('btn-change-pass').addEventListener('click', () => {
 document.getElementById('btn-chpass-close').addEventListener('click', () => {
   document.getElementById('modal-chpass').style.display = 'none';
 });
+
+// ── SETTINGS MODAL (Holidays & Meetings) ──────────────────────────────────────
+document.getElementById('btn-settings').addEventListener('click', () => {
+  document.getElementById('modal-settings').style.display = 'flex';
+  document.getElementById('user-menu-dropdown').classList.remove('open');
+  refreshSettingsDateFilters();
+  renderSettingsModal();
+});
+
+document.getElementById('btn-settings-close').addEventListener('click', () => {
+  document.getElementById('modal-settings').style.display = 'none';
+});
+
+document.getElementById('btn-settings-close-btn').addEventListener('click', () => {
+  document.getElementById('modal-settings').style.display = 'none';
+});
+
+const isAdminUser = () => (localStorage.getItem('fa_group') || '').toUpperCase() === 'ADMIN';
+
+function renderSettingsModal() {
+  const settingsAuthField = document.getElementById('settings-auth-person-field');
+  settingsAuthField.style.display = isAdminUser() ? 'block' : 'none';
+  updateSettingsHiddenList();
+}
+
+function updateSettingsHiddenList() {
+  const list = document.getElementById('settings-hidden-list');
+  const holidays = getHolidaysAndMeetings();
+  const userNum = localStorage.getItem('fa_user_num') || '';
+
+  if (!holidays.length) {
+    list.innerHTML = '<div style="color:var(--muted)">No hidden dates yet</div>';
+    return;
+  }
+
+  const userHolidays = holidays.filter(h => !h.authorizedPerson || h.authorizedPerson === userNum || isAdminUser());
+
+  if (!userHolidays.length) {
+    list.innerHTML = '<div style="color:var(--muted)">No hidden dates</div>';
+    return;
+  }
+
+  list.innerHTML = userHolidays.map((h, idx) => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
+      <span>${h.date} - ${h.reason || 'N/A'}${h.authorizedPerson ? ' (' + h.authorizedPerson + ')' : ''}</span>
+      <button class="btn-reset" style="padding:2px 8px;font-size:.8rem" data-idx="${idx}">Remove</button>
+    </div>
+  `).join('');
+
+  list.querySelectorAll('button[data-idx]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.idx);
+      holidays.splice(idx, 1);
+      localStorage.setItem('fa_holidays_meetings', JSON.stringify(holidays));
+      updateSettingsHiddenList();
+      applyFilters();
+    });
+  });
+}
+
+document.getElementById('btn-settings-add').addEventListener('click', () => {
+  const err = document.getElementById('settings-error');
+  err.textContent = '';
+
+  const fromDate = document.getElementById('settings-date-from').value.trim();
+  const toDate = document.getElementById('settings-date-to').value.trim();
+  const reason = document.getElementById('settings-hide-reason').value.trim();
+  const authPerson = document.getElementById('settings-auth-person').value.trim();
+
+  if (!fromDate || !toDate) { err.textContent = 'Please select both From and To dates.'; return; }
+  if (fromDate > toDate) { err.textContent = 'Date From cannot be after Date To.'; return; }
+  if (!reason || !['Holiday', 'Meeting'].includes(reason)) {
+    err.textContent = 'Please select Holiday or Meeting.';
+    return;
+  }
+
+  const holidays = getHolidaysAndMeetings();
+  const userNum = localStorage.getItem('fa_user_num') || '';
+  const start = new Date(`${fromDate}T00:00:00`);
+  const end = new Date(`${toDate}T00:00:00`);
+  const authorizedPerson = isAdminUser() && authPerson ? authPerson : userNum;
+  let addedCount = 0;
+
+  for (const current = new Date(start); current <= end; current.setDate(current.getDate() + 1)) {
+    const dateStr = current.toISOString().slice(0, 10);
+    if (!isWeekend(dateStr) && !holidays.some(entry => entry.date === dateStr && entry.authorizedPerson === authorizedPerson)) {
+      holidays.push({
+      date: dateStr,
+      reason,
+      authorizedPerson,
+      createdBy: userNum,
+      createdAt: new Date().toISOString()
+      });
+      addedCount += 1;
+    }
+  }
+
+  if (!addedCount) { err.textContent = 'No new weekdays in selected range.'; return; }
+  localStorage.setItem('fa_holidays_meetings', JSON.stringify(holidays));
+
+  document.getElementById('settings-date-from').value = '';
+  document.getElementById('settings-date-to').value = '';
+  document.getElementById('settings-hide-reason').value = '';
+  document.getElementById('settings-auth-person').value = '';
+
+  updateSettingsHiddenList();
+  applyFilters();
+});
+
+// Event listener for "Date From" changes in settings - refreshes "Date To" options
+document.getElementById('settings-date-from').addEventListener('change', refreshSettingsDateFilters);
 
 document.getElementById('btn-chpass-submit').addEventListener('click', async () => {
   const cur  = document.getElementById('chpass-current').value.trim();
@@ -452,6 +651,7 @@ function applyFilters() {
         return false;
       }
     }
+    if (shouldHideRecord(r)) return false;
     return true;
   });
   
