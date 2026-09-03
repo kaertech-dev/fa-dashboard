@@ -1,0 +1,816 @@
+<!-- fa_dashboard.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/fa_dashboard.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/failure_analysis.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/rework.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/return.css') }}">
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='images/kaertech_logo192.png') }}">
+<title>FA Dashboard</title>
+<!-- SheetJS for Excel export -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+
+<div id="loader"><div class="spinner"></div></div>
+
+<!-- ── LOGIN ── -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="brand">
+      <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+        <rect width="28" height="28" rx="6" fill="#f78166" opacity=".15"/>
+        <path d="M7 20L14 8L21 20H7Z" fill="#f78166"/>
+        <circle cx="14" cy="14" r="3" fill="#f78166" opacity=".5"/>
+      </svg>
+      <span>FA Dashboard</span>
+    </div>
+    <h2>Sign in to continue</h2>
+    <div class="field">
+      <label>Employee No.</label>
+      <input id="inp-user" type="text" placeholder="Enter employee number" autocomplete="username">
+    </div>
+    <div class="field">
+      <label>Badge</label>
+      <input id="inp-pass" type="password" placeholder="Enter badge" autocomplete="current-password">
+    </div>
+    <button class="btn-login" id="btn-login">Sign In</button>
+    <div id="login-error"></div>
+  </div>
+</div>
+
+<!-- ── DASHBOARD ── -->
+<div id="dashboard-screen">
+  <header>
+    <div class="header-left">
+      <svg width="22" height="22" viewBox="0 0 28 28" fill="none">
+        <rect width="28" height="28" rx="6" fill="#f78166" opacity=".2"/>
+        <path d="M7 20L14 8L21 20H7Z" fill="#f78166"/>
+      </svg>
+      <span class="title">Failure Analysis Traceability</span>
+      <span class="badge-live">Live</span>
+    </div>
+    <div class="header-right">
+      <div class="user-menu-wrap" id="user-menu-wrap">
+        <!-- <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=notifications" />
+        <button class="material-symbols-outlined">
+        notifications
+        </button> -->
+        <button class="user-menu-btn" id="user-menu-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.8"/>
+            <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+          <span id="user-label">User</span>
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+            <path d="M2 3.5l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <div class="user-menu-dropdown" id="user-menu-dropdown">
+          <div class="user-menu-section-label">Navigate</div>
+
+          <div class="user-menu-section-label" data-group="FA">FA</div>
+          <button class="user-menu-item" href="#" id="btn-endorsement" data-group="FA">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.5"/><path d="M8 5.5v3l2 1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            Endorsement
+          </button>
+          <button class="user-menu-item" href="#" id="btn-failure-analysis" data-group="FA">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.5"/><path d="M8 5.5v3l2 1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            Failure Analysis
+          </button>
+          <div class="user-menu-section-label" data-group="PROCESS">PROCESS</div>
+          <button class="user-menu-item" href="#" id="btn-rework" data-group="PROCESS">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 8a5 5 0 0 1 9.9-1M13 8a5 5 0 0 1-9.9 1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M13 4v3h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Rework
+          </button>
+          <button class="user-menu-item" href="#" id="btn-return" data-group="PROCESS">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M13 8H3M7 4l-4 4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Return
+          </button>
+          <div class="user-menu-divider"></div>
+          <div class="user-menu-section-label">Account</div>
+          <button class="user-menu-item" id="btn-settings">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.5"/><path d="M8 2v2M8 12v2M3 8H1M14 8h2M4.6 4.6l-1.4-1.4M12.8 12.8l1.4 1.4M4.6 11.4l-1.4 1.4M12.8 3.2l1.4-1.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            Settings
+          </button>
+          <button class="user-menu-item" id="btn-change-pass">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            Change Password
+          </button>
+          <button class="user-menu-item danger" id="btn-logout">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M6 3H3.5A1.5 1.5 0 0 0 2 4.5v7A1.5 1.5 0 0 0 3.5 13H6M10 5l3 3-3 3M13 8H6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Sign Out
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- ── Filter bar ── -->
+    <div class="filter-bar">
+      <div class="filter-controls">
+        <div class="filter-group">
+          <label>Product</label>
+          <select id="f-product"><option value="">All Products</option></select>
+        </div>
+        <div class="filter-group">
+          <label>Model</label>
+          <select id="f-model"><option value="">All Models</option></select>
+        </div>
+        <div class="filter-group">
+          <label>Station</label>
+          <select id="f-station"><option value="">All Stations</option></select>
+        </div>
+        <div class="filter-group">
+          <label>FA Status</label>
+          <select id="f-status">
+            <option value="">All</option>
+            <option value="1">Open</option>
+            <option value="4">Closed</option>
+            <option value="2">WIP</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>Date From</label>
+          <select id="f-from"><option value="">All Dates</option></select>
+        </div>
+        <div class="filter-group">
+          <label>Date To</label>
+          <select id="f-to"><option value="">All Dates</option></select>
+        </div>
+      </div>
+      <div class="filter-actions">
+        <button class="btn-reset" id="btn-reset">Reset</button>
+        <button class="btn-apply" id="btn-apply">Apply Filters</button>
+        <div class="dl-wrap">
+          <button class="btn-download" id="btn-dl-toggle">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <path d="M8 1v9M4 7l4 4 4-4M2 13h12" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Export
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+              <path d="M2 3.5l3 3 3-3" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <div class="dl-menu" id="dl-menu">
+            <button id="dl-csv">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="2" y="1" width="12" height="14" rx="2" stroke="#6b7280" stroke-width="1.5"/><path d="M5 5h6M5 8h6M5 11h4" stroke="#6b7280" stroke-width="1.5" stroke-linecap="round"/></svg>
+              Download CSV
+              <span class="dl-ext">.csv</span>
+            </button>
+            <button id="dl-xlsx">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="2" y="1" width="12" height="14" rx="2" stroke="#16a34a" stroke-width="1.5"/><path d="M5 5l6 6M11 5l-6 6" stroke="#16a34a" stroke-width="1.5" stroke-linecap="round"/></svg>
+              Download Excel
+              <span class="dl-ext">.xlsx</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- KPI cards -->
+    <div class="kpi-row">
+      <div class="kpi-card red">  <div class="kpi-label">Total Failures</div><div class="kpi-val" id="kpi-total">–</div><div class="kpi-sub">Total Units Failed</div></div>
+      <div class="kpi-card warn kpi-clickable"  data-status="1"><div class="kpi-label">Open FA</div>     <div class="kpi-val" id="kpi-open">–</div> <div class="kpi-sub">status = Open</div></div>
+      <div class="kpi-card blue kpi-clickable"  data-status="2"><div class="kpi-label">In Progress</div> <div class="kpi-val" id="kpi-wip">–</div>  <div class="kpi-sub">status = WIP</div></div>
+      <div class="kpi-card green kpi-clickable" data-status="4"><div class="kpi-label">Closed</div>      <div class="kpi-val" id="kpi-closed">–</div><div class="kpi-sub">status = Closed</div></div>
+      <div class="kpi-card blue"> <div class="kpi-label">Products</div>     <div class="kpi-val" id="kpi-products">–</div><div class="kpi-sub">unique</div></div>
+    </div>
+
+    <!-- Charts row 1: Product + Station -->
+    <div class="charts-row">
+      <div class="chart-card">
+        <div class="section-title">Failures by Product (by Month)</div>
+        <canvas id="chart-product" height="220"></canvas>
+      </div>
+      <div class="chart-card">
+        <div class="section-title">Failures by Station (by Month)</div>
+        <canvas id="chart-station" height="220"></canvas>
+      </div>
+    </div>
+
+    <!-- Chart row 2: Defect Category (full width, horizontal bars) -->
+    <div class="chart-card" style="margin-bottom:24px">
+      <div class="section-title">Failures by Defect Category</div>
+      <div style="font-size:.78rem;color:var(--muted);margin-bottom:12px">Sorted by count — highest first</div>
+      <canvas id="chart-defect-cat"></canvas>
+    </div>
+
+    <!-- Pareto: repeated FA cases -->
+    <div class="chart-card pareto-card">
+      <div class="section-title">Pareto: Most FA Case</div>
+      <div id="pareto-top-case" class="pareto-top-case"></div>
+      <div class="pareto-trend">
+        <div class="pareto-trend-title">Units affected by month</div>
+        <canvas id="chart-pareto-trend" height="180"></canvas>
+      </div>
+      <div class="pareto-list-header">
+        <span>Top 5 FA cases</span>
+        <button id="btn-pareto-more" class="btn-reset" type="button">More</button>
+      </div>
+      <div id="pareto-case-list" class="pareto-case-list"></div>
+    </div>
+
+    <!-- Table -->
+    <div class="section-title">Failure Records</div>
+    <div class="table-wrap">
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Serial Num</th>
+              <th>Product</th>
+              <th>Model</th>
+              <th>PO Num</th>
+              <th>Station</th>
+              <th>Test Failure</th>
+              <th>Prod Endorser</th>
+              <th>FA Endorse Date</th>
+              <th>Failure Cause</th>
+              <th>Affected Comp</th>
+              <th>Defect Cat</th>
+              <th>FA PIC</th>
+              <th>Proposed Action</th>
+              <th>FA Class</th>
+              <th>FA Case</th>
+              <th>FA Ended Date</th>
+              <th>Repairer</th>
+              <th>Action Taken</th>
+              <th>Repaired Date</th>
+              <th>Returned Date</th>
+              <th>FA Status</th>
+            </tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+      <div class="pagination">
+        <span id="page-info">–</span>
+        <div class="page-btns">
+          <button class="page-btn" id="btn-prev">‹ Prev</button>
+          <button class="page-btn" id="btn-next">Next ›</button>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- ── Endorsement modal ── -->
+<!-- Matches the legacy "Endorse Rejects To FA" tool: Production selects
+     Product/Model/Station, scans the Serial Number, and records the
+     Endorser + Failure Mode + PO. Submitting registers a NEW FA record
+     (or refreshes it if this serial was already endorsed once). -->
+<div id="modal-endorsement" class="modal-backdrop" style="display:none">
+  <div class="modal-card" style="max-width:600px">
+    <div class="modal-header">
+      <span class="modal-title">ENDORSE REJECTS TO FA</span>
+      <button class="modal-close" id="btn-endorsement-close">✕</button>
+    </div>
+
+    <div style="display:flex;gap:12px">
+      <div class="field" style="flex:1">
+        <label>PRODUCT</label>
+        <select id="endorsement-product" disabled style="display:block"><option value="">Auto Shown Product</option></select>
+        <input type="text" id="endorsement-product-input" list="endorsement-product-list" 
+          placeholder="Enter product name" style="display:none;width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border,#d1d5db);box-sizing:border-box">
+        <datalist id="endorsement-product-list"></datalist>
+        <div style="font-size:.72rem;color:var(--muted);margin-top:2px">Active customer</div>
+      </div>
+      <div class="field" style="flex:1">
+        <label>MODEL</label>
+        <select id="endorsement-model" disabled style="display:block"><option value="">Auto shown model</option></select>
+        <input type="text" id="endorsement-model-input" list="endorsement-model-list"
+          placeholder="Enter model name" style="display:none;width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border,#d1d5db);box-sizing:border-box">
+        <datalist id="endorsement-model-list"></datalist>
+      </div>
+      <div class="field" style="flex:1">
+        <label>STATION</label>
+        <input type="text" id="endorsement-station" list="endorsement-station-list"
+          placeholder="Auto-filled from last log — editable" required readonly>
+        <datalist id="endorsement-station-list"></datalist>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:12px">
+      <div class="field" style="flex:1">
+        <label>SERIAL NUMBER</label>
+        <input type="text" id="endorsement-serial" placeholder="Scan or type serial number">
+      </div>
+      <!-- <div class="field" style="flex:1">
+        <label>STATUS (TBD)</label>
+        <select id="endorsement-status">
+          <option value="">Select status</option>
+          <option value="In Process">In Process</option>
+          <option value="RMA">RMA</option>
+        </select>
+      </div> -->
+    </div>
+
+    <div class="field">
+      <label>ENDORSER</label>
+      <div style="display:flex;gap:6px">
+        <input type="text" id="endorsement-endorser" placeholder="Endorser employee number" readonly style="flex:1">
+        <button type="button" class="btn-reset" id="btn-endorsement-endorser-change">Change</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>TEXT DISPLAY</label>
+      <pre id="endorsement-text-display" style="background:#16a34a;color:#0a3d1c;font-weight:600;
+        font-family:Consolas,monospace;font-size:.8rem;border-radius:6px;padding:10px 12px;
+        min-height:80px;white-space:pre-wrap;margin:0">Please enter the employee number of the endorser.</pre>
+    </div>
+
+    <div class="field">
+      <label>FAILURE MODE</label>
+      <textarea id="endorsement-failure-mode" rows="3" placeholder="Describe the test failure" required
+        style="width:100%;resize:vertical;font-family:inherit;font-size:.85rem;padding:8px 10px;
+        border-radius:6px;border:1px solid var(--border,#d1d5db);box-sizing:border-box"></textarea>
+    </div>
+
+    <div class="field">
+      <label>PO</label>
+      <input type="text" id="endorsement-po" placeholder="input PO num">
+    </div>
+
+    <div id="endorsement-error" style="color:var(--danger);font-size:.83rem;min-height:18px;margin-bottom:4px"></div>
+
+    <div style="display:flex;gap:10px">
+      <button class="btn-apply" id="btn-endorsement-submit" style="flex:1">Endorse to FA</button>
+      <button class="btn-reset" id="btn-endorsement-exit" style="flex:1">Exit</button>
+    </div>
+  </div>
+</div>
+
+<!-- Failure Analysis modal -->
+<div id="modal-fa" class="modal-backdrop" style="display:none">
+  <div class="modal-card" style="max-width:560px">
+    <div class="modal-header">
+      <span class="modal-title">FAILURE ANALYSIS</span>
+      <button class="modal-close" id="btn-fa-close">✕</button>
+    </div>
+
+    <div class="field">
+      <label>FA DOCUMENT URL</label>
+      <input type="url" id="fa-document-url" placeholder="https://...">
+    </div>
+
+    <div style="display:flex;gap:12px">
+      <div class="field" style="flex:1">
+        <label>SERIAL NUMBER</label>
+        <input type="text" id="fa-serial" placeholder="Scan or type serial number">
+      </div>
+      <div class="field" style="flex:1">
+        <label>DATETIME</label>
+        <input type="text" id="fa-datetime" placeholder="–" readonly>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>TEXT DISPLAY</label>
+      <pre id="fa-text-display" style="background:#16a34a;color:#0a3d1c;font-weight:600;
+        font-family:Consolas,monospace;font-size:.8rem;border-radius:6px;padding:10px 12px;
+        min-height:120px;white-space:pre-wrap;margin:0">Scan a serial number to load UUT details…</pre>
+    </div>
+
+    <div style="display:flex;gap:12px">
+      <div class="field" style="flex:1">
+        <label>CAUSE OF FAILURE</label>
+        <input type="text" id="fa-failure-cause" placeholder="Cause of failure" required>
+      </div>
+      <div class="field" style="flex:1">
+        <label>PROPOSED ACTION</label>
+        <input id="fa-proposed-action" value="" placeholder="Input Proposed Action" required></input>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:12px">
+      <div class="field" style="flex:1">
+        <label>AFFECTED COMPONENT</label>
+        <input type="text" id="fa-affected-comp" placeholder="Affected component" required>
+      </div>
+      <div class="field" style="flex:1">
+        <label>DEFECT CATEGORY</label>
+        <select id="fa-defect-cat" required><option value="">Select…</option></select>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:12px">
+      <div class="field" style="flex:1">
+        <label>FA PIC EMPLOYEE NUMBER</label>
+        <div style="display:flex;gap:6px">
+          <input type="text" id="fa-pic" placeholder="FA PIC" readonly style="flex:1">
+          <button type="button" class="btn-reset" id="btn-fa-pic-change">Change</button>
+        </div>
+      </div>
+      <div class="field" style="flex:1">
+        <label>FA CLASS</label>
+        <select id="fa-class">
+          <option value="">Select…</option>
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="fa-error" style="color:var(--danger);font-size:.83rem;min-height:18px;margin-bottom:4px"></div>
+
+    <div style="display:flex;gap:10px">
+      <button class="btn-apply" id="btn-fa-submit" style="flex:1">Update FA</button>
+      <button class="btn-reset" id="btn-fa-exit" style="flex:1">Exit</button>
+    </div>
+  </div>
+</div>
+
+<!-- Rework Modal -->
+<div id="modal-rework" class="modal-backdrop" style="display:none">
+  <div class="modal-card" style="max-width:560px">
+    <div class="modal-header">
+      <span class="modal-title">Update Repair Status</span>
+      <button class="modal-close" id="btn-rework-close">✕</button>
+    </div>
+
+    <div style="display:flex;gap:12px">
+      <div class="field" style="flex:1">
+        <label>SERIAL NUMBER</label>
+        <input type="text" id="rework-serial" placeholder="Scan or type serial number">
+      </div>
+      <div class="field" style="flex:1">
+        <label>DATETIME</label>
+        <input type="text" id="rework-datetime" placeholder="–" readonly>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:12px">
+      <div class="field" style="flex:1">
+        <label>REWORKER</label>
+        <div style="display:flex;gap:6px">
+          <input type="text" id="rework-pic" placeholder="Reworker employee number" readonly style="flex:1">
+          <button type="button" class="btn-reset" id="btn-rework-pic-change">Change</button>
+        </div>
+      </div>
+      <div class="field" style="flex:1">
+        <label>ACTION TAKEN</label>
+        <select id="rework-action-taken"><option value="">Select…</option></select>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>TEXT DISPLAY</label>
+      <pre id="rework-text-display" style="background:#16a34a;color:#4a3b00;font-weight:600;
+        font-family:Consolas,monospace;font-size:.8rem;border-radius:6px;padding:10px 12px;
+        min-height:160px;white-space:pre-wrap;margin:0">Please enter the employee number of the reworker.</pre>
+    </div>
+
+    <div id="rework-error" style="color:var(--danger);font-size:.83rem;min-height:18px;margin-bottom:4px"></div>
+
+    <div style="display:flex;gap:10px">
+      <button class="btn-apply" id="btn-rework-submit" style="flex:1">Update Repair</button>
+      <button class="btn-reset" id="btn-rework-exit" style="flex:1">Exit</button>
+    </div>
+  </div>
+</div>
+
+<!-- Return Modal -->
+<div id="modal-return" class="modal-backdrop" style="display:none">
+  <div class="modal-card" style="max-width:560px">
+    <div class="modal-header">
+      <span class="modal-title">Return Repaired Units</span>
+      <button class="modal-close" id="btn-return-close">✕</button>
+    </div>
+
+    <div style="display:flex;gap:12px">
+      <div class="field" style="flex:1">
+        <label>SERIAL NUMBER</label>
+        <input type="text" id="return-serial" placeholder="Scan or type serial number">
+      </div>
+      <div class="field" style="flex:1">
+        <label>DATETIME</label>
+        <input type="text" id="return-datetime" placeholder="–" readonly>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>PERSON IN CHARGE</label>
+      <div style="display:flex;gap:6px">
+        <input type="text" id="return-pic" placeholder="Person-in-charge employee number" readonly style="flex:1">
+        <button type="button" class="btn-reset" id="btn-return-pic-change">Change</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>TEXT DISPLAY</label>
+      <pre id="return-text-display" style="background:#16a34a;color:#4a3b00;font-weight:600;
+        font-family:Consolas,monospace;font-size:.8rem;border-radius:6px;padding:10px 12px;
+        min-height:160px;white-space:pre-wrap;margin:0">Please enter the employee number of the person-in-charge.</pre>
+    </div>
+
+    <div id="return-error" style="color:var(--danger);font-size:.83rem;min-height:18px;margin-bottom:4px"></div>
+
+    <div style="display:flex;gap:10px">
+      <button class="btn-apply" id="btn-return-submit" style="flex:1">Return</button>
+      <button class="btn-reset" id="btn-return-exit" style="flex:1">Exit</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── CHANGE PASSWORD MODAL ── -->
+<div id="modal-chpass" class="modal-backdrop" style="display:none">
+  <div class="modal-card">
+    <div class="modal-header">
+      <span class="modal-title">Change Password</span>
+      <button class="modal-close" id="btn-chpass-close">✕</button>
+    </div>
+    <div class="field">
+      <label>Current password</label>
+      <input type="password" id="chpass-current" placeholder="Current password">
+    </div>
+    <div class="field">
+      <label>New password</label>
+      <input type="password" id="chpass-new" placeholder="New password">
+    </div>
+    <div class="field">
+      <label>Confirm new password</label>
+      <input type="password" id="chpass-confirm" placeholder="Repeat new password">
+    </div>
+    <div id="chpass-error" style="color:var(--danger);font-size:.83rem;min-height:18px;margin-bottom:4px"></div>
+    <button class="btn-apply" id="btn-chpass-submit" style="width:100%;margin-top:4px">Update Badge</button>
+  </div>
+</div>
+<!-- ── SETTINGS MODAL (Holidays & Meetings) ── -->
+<div id="modal-settings" class="modal-backdrop" style="display:none">
+  <div class="modal-card" style="max-width:600px">
+    <div class="modal-header">
+      <span class="modal-title">Settings: Hide Data (Holidays & Meetings)</span>
+      <button class="modal-close" id="btn-settings-close">✕</button>
+    </div>
+
+    <div class="field">
+      <label>Reason</label>
+      <select id="settings-hide-reason">
+        <option value="">Select reason</option>
+        <option value="Meeting">Meeting</option>
+        <option value="Holiday">Holiday</option>
+      </select>
+    </div>
+
+    <div style="display:flex;gap:12px;margin-top:8px">
+      <div class="field" style="flex:1">
+        <label>Date From</label>
+        <select id="settings-date-from"><option value="">Select date</option></select>
+      </div>
+      <div class="field" style="flex:1">
+        <label>Date To</label>
+        <select id="settings-date-to"><option value="">Select date</option></select>
+      </div>
+    </div>
+    <div style="font-size:.72rem;color:var(--muted);margin-top:4px;margin-bottom:8px">
+      ℹ️ Weekends (Sat/Sun) are automatically excluded. Only holidays and meetings can be added.
+    </div>
+
+    <div class="field" id="settings-auth-person-field" style="display:none">
+      <label>Authorized Person (Admin only)</label>
+      <input type="text" id="settings-auth-person" placeholder="Employee number (leave blank for self)">
+      <div style="font-size:.72rem;color:var(--muted);margin-top:2px">Leave blank to mark for yourself</div>
+    </div>
+
+    <button class="btn-apply" id="btn-settings-add" style="width:100%;margin-top:4px">Add Hide Date</button>
+
+    <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
+      <div style="font-weight:600;margin-bottom:8px">Hidden Dates:</div>
+      <div id="settings-hidden-list" style="font-size:.85rem;max-height:200px;overflow-y:auto">
+        <div style="color:var(--muted)">No hidden dates yet</div>
+      </div>
+    </div>
+
+    <div id="settings-error" style="color:var(--danger);font-size:.83rem;min-height:18px;margin-bottom:4px;margin-top:8px"></div>
+
+    <button class="btn-reset" id="btn-settings-close-btn" style="width:100%;margin-top:4px">Close</button>
+  </div>
+</div>
+<!-- ── FAILURE RECORD DETAIL MODAL ── -->
+<div id="modal-failure-record" class="modal-backdrop failure-detail-backdrop" style="display:none">
+  <div class="modal-card failure-detail-modal">
+
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">FAILURE RECORD</div>
+        <div id="failure-detail-subtitle" class="failure-detail-subtitle">
+          Failure record details
+        </div>
+      </div>
+      <button class="modal-close" id="btn-failure-detail-close">✕</button>
+    </div>
+
+    <!-- Focus / summary area -->
+    <div class="failure-focus">
+      <div class="failure-focus-main">
+        <span class="failure-focus-label">SERIAL NUMBER</span>
+        <span id="failure-detail-serial" class="failure-focus-serial">–</span>
+      </div>
+
+      <div id="failure-detail-status" class="failure-focus-status">
+        –
+      </div>
+    </div>
+
+    <!-- Main failure information -->
+    <div class="failure-detail-section">
+      <div class="failure-detail-section-title">
+        Failure Information
+      </div>
+
+      <div class="failure-detail-grid">
+        <div class="failure-detail-item">
+          <span>Product</span>
+          <strong id="fd-product">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>Model</span>
+          <strong id="fd-model">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>PO Number</span>
+          <strong id="fd-po">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>Station</span>
+          <strong id="fd-station">–</strong>
+        </div>
+
+        <div class="failure-detail-item failure-detail-wide">
+          <span>Test Failure</span>
+          <strong id="fd-test-failure">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>Production Endorser</span>
+          <strong id="fd-prod-endorser">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>FA Endorse Date</span>
+          <strong id="fd-fa-endorse-date">–</strong>
+        </div>
+      </div>
+    </div>
+
+    <!-- Analysis -->
+    <div class="failure-detail-section failure-analysis-focus">
+      <div class="failure-detail-section-title">
+        Failure Analysis
+      </div>
+
+      <div class="failure-detail-grid">
+        <div class="failure-detail-item failure-detail-wide">
+          <span>Failure Cause</span>
+          <strong id="fd-failure-cause">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>Affected Component</span>
+          <strong id="fd-affected-comp">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>Defect Category</span>
+          <strong id="fd-defect-cat">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>FA PIC</span>
+          <strong id="fd-fa-pic">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>FA Class</span>
+          <strong id="fd-fa-class">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>FA Case</span>
+          <strong id="fd-fa-case">–</strong>
+        </div>
+
+        <div class="failure-detail-item failure-detail-wide">
+          <span>Proposed Action</span>
+          <strong id="fd-proposed-action">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>FA Ended Date</span>
+          <strong id="fd-fa-ended-date">–</strong>
+        </div>
+      </div>
+    </div>
+
+    <!-- Repair -->
+    <div class="failure-detail-section">
+      <div class="failure-detail-section-title">
+        Repair / Return
+      </div>
+
+      <div class="failure-detail-grid">
+        <div class="failure-detail-item">
+          <span>Repairer</span>
+          <strong id="fd-repairer">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>Repaired Date</span>
+          <strong id="fd-repaired-date">–</strong>
+        </div>
+
+        <div class="failure-detail-item failure-detail-wide">
+          <span>Action Taken</span>
+          <strong id="fd-action-taken">–</strong>
+        </div>
+
+        <div class="failure-detail-item">
+          <span>Returned Date</span>
+          <strong id="fd-returned-date">–</strong>
+        </div>
+      </div>
+    </div>
+
+    <div class="failure-detail-footer">
+      <button class="btn-reset" id="btn-failure-detail-exit">
+        Close
+      </button>
+    </div>
+
+  </div>
+</div>
+
+<!-- Failure Records List Modal (summary of matching records) -->
+<div id="modal-failure-list" class="modal-backdrop" style="display:none">
+  <div class="modal-card">
+    <div class="modal-header">
+      <span class="modal-title">Failure Records</span>
+      <button class="modal-close" id="btn-failure-list-close">✕</button>
+    </div>
+
+    <div style="padding:12px 18px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div id="failure-list-subtitle" style="color:var(--muted)">Summary of matching records</div>
+        <div id="failure-list-count" style="font-weight:600"></div>
+      </div>
+
+      <div style="max-height:420px;overflow:auto;border-top:1px solid var(--border);">
+        <table style="width:100%;border-collapse:collapse">
+          <thead>
+            <tr style="text-align:left;font-weight:600;color:var(--muted)">
+              <th style="width:40px;padding:8px">#</th>
+              <th style="padding:8px">Serial</th>
+              <th style="padding:8px">Product</th>
+              <th style="padding:8px">Model</th>
+              <th style="padding:8px">Station</th>
+              <th style="padding:8px">Status</th>
+              <th style="padding:8px">Short Failure</th>
+            </tr>
+          </thead>
+          <tbody id="failure-list-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px;padding:12px 18px;border-top:1px solid var(--border);">
+      <button class="btn-reset" id="btn-failure-list-exit" style="flex:1">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- All FA case groups from the current filters -->
+<div id="modal-pareto-groups" class="modal-backdrop" style="display:none">
+  <div class="modal-card">
+    <div class="modal-header">
+      <span class="modal-title">FA Case Groups</span>
+      <button class="modal-close" id="btn-pareto-groups-close">✕</button>
+    </div>
+    <div id="pareto-groups-body" class="pareto-groups-body"></div>
+    <div style="display:flex;gap:10px;padding-top:12px;border-top:1px solid var(--border);">
+      <button class="btn-reset" id="btn-pareto-groups-exit" style="flex:1">Close</button>
+    </div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/fa_dashboard.js') }}"></script>
+<script src="{{ url_for('static', filename='js/endorsement.js') }}"></script>
+<script src="{{ url_for('static', filename='js/fa_page.js') }}"></script>
+<script src="{{ url_for('static', filename='js/rework.js') }}"></script>
+<script src="{{ url_for('static', filename='js/return.js') }}"></script>
+
+</body>
+</html>

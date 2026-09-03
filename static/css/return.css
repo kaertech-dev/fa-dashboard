@@ -1,0 +1,37 @@
+/* ── RETURN MODAL ── */
+#modal-return .modal-card {
+  width: 560px;
+  max-width: 92vw;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+#modal-return input[type="text"] {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-size: .9rem;
+  outline: none;
+  transition: border .2s;
+}
+#modal-return input[readonly] {
+  background: var(--surface2);
+  color: var(--muted);
+  cursor: default;
+}
+#return-datetime {
+  background: var(--surface2);
+  color: var(--muted);
+  font-family: 'Consolas', monospace;
+  font-size: .85rem;
+}
+#return-text-display {
+  border: 1px solid #16a34a;
+  border-radius: 6px;
+  line-height: 1.55;
+  min-height: 160px;
+  max-height: 300px;
+  overflow-y: auto;
+}

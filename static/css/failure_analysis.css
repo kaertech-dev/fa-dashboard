@@ -1,0 +1,90 @@
+/* ── FAILURE ANALYSIS MODAL ── */
+#modal-fa .modal-card {
+  width: 560px;
+  max-width: 92vw;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+/* Two-field rows inside modal */
+#modal-fa .field-row {
+  display: flex;
+  gap: 12px;
+}
+#modal-fa .field-row .field { flex: 1; min-width: 0; }
+
+/* Generic select styling (base CSS only styled .filter-group select) */
+#modal-fa select,
+#modal-fa input[type="text"] {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-size: .9rem;
+  outline: none;
+  transition: border .2s;
+}
+#modal-fa select { cursor: pointer; }
+#modal-fa select:focus,
+#modal-fa input[type="text"]:focus { border-color: var(--accent3); }
+
+#modal-fa input[readonly] {
+  background: var(--surface2);
+  color: var(--muted);
+  cursor: default;
+}
+
+/* DATETIME field reads as a static display, not an editable box */
+#fa-datetime {
+  background: var(--surface2);
+  color: var(--muted);
+  font-family: 'Consolas', monospace;
+  font-size: .85rem;
+}
+
+/* Green UUT text-display panel, matching the scanner reference */
+#fa-text-display {
+  background: #16a34a;
+  color: #0a3d1c;
+  font-weight: 600;
+  font-family: 'Consolas', monospace;
+  font-size: .8rem;
+  line-height: 1.55;
+  border: 1px solid #1f9e46;
+  border-radius: 6px;
+  padding: 12px 14px;
+  min-height: 130px;
+  max-height: 220px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+/* FA PIC + Change button row */
+#modal-fa .fa-pic-row {
+  display: flex;
+  gap: 6px;
+}
+#modal-fa .fa-pic-row input { flex: 1; }
+#modal-fa .fa-pic-row .btn-reset {
+  padding: 0 14px;
+  white-space: nowrap;
+}
+
+/* Footer action buttons */
+#modal-fa .modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+}
+#modal-fa .modal-actions button { flex: 1; }
+#modal-fa .btn-apply {
+  background: var(--accent2);
+}
+#modal-fa .btn-apply:hover { opacity: .88; }
+
+@media (max-width: 620px) {
+  #modal-fa .field-row { flex-direction: column; gap: 0; }
+}
