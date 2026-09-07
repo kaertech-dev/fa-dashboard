@@ -12,7 +12,7 @@
 // of suggestions from /api/endorsement/stations for convenience.
 //
 // Scanning a serial does two lookups in order:
-//   1. /api/endorsement/lookup/<serial>      — is it already in fa.main_copy?
+//   1. /api/endorsement/lookup/<serial>      — is it already in fa.main?
 //   2. /api/endorsement/station_log/<serial> — if not, search the production
 //      station logs (StationLog) for its most recent entry, to auto-fill
 //      Product/Model/Station and remarks (-> test_failure).

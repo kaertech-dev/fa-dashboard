@@ -547,8 +547,8 @@
   </div>
 </div>
 <!-- ── SETTINGS MODAL (Holidays & Meetings) ── -->
-<div id="modal-settings" class="modal-backdrop" style="display:none">
-  <div class="modal-card" style="max-width:600px">
+<div id="modal-settings" class="modal-backdrop settings-modal-backdrop" style="display:none">
+  <div class="modal-card settings-modal-card" style="max-width:600px">
     <div class="modal-header">
       <span class="modal-title">Settings: Hide Data (Holidays & Meetings)</span>
       <button class="modal-close" id="btn-settings-close">✕</button>
@@ -556,7 +556,15 @@
 
     <div class="field">
       <label>Reason</label>
-      <select id="settings-hide-reason">
+      <select id="settings-hide-reason" style="width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    color: var(--text);
+    font-size: .95rem;
+    outline: none;
+    transition: border .2s;">
         <option value="">Select reason</option>
         <option value="Meeting">Meeting</option>
         <option value="Holiday">Holiday</option>
@@ -566,11 +574,27 @@
     <div style="display:flex;gap:12px;margin-top:8px">
       <div class="field" style="flex:1">
         <label>Date From</label>
-        <select id="settings-date-from"><option value="">Select date</option></select>
+        <select id="settings-date-from"style= "width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    color: var(--text);
+    font-size: .95rem;
+    outline: none;
+    transition: border .2s;"><option value="">Select date</option></select>
       </div>
       <div class="field" style="flex:1">
         <label>Date To</label>
-        <select id="settings-date-to"><option value="">Select date</option></select>
+        <select id="settings-date-to" style="width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    color: var(--text);
+    font-size: .95rem;
+    outline: none;
+    transition: border .2s;"><option value="">Select date</option></select>
       </div>
     </div>
     <div style="font-size:.72rem;color:var(--muted);margin-top:4px;margin-bottom:8px">
@@ -578,12 +602,57 @@
     </div>
 
     <div class="field" id="settings-auth-person-field" style="display:none">
-      <label>Authorized Person (Admin only)</label>
-      <input type="text" id="settings-auth-person" placeholder="Employee number (leave blank for self)">
-      <div style="font-size:.72rem;color:var(--muted);margin-top:2px">Leave blank to mark for yourself</div>
+      <label>Authorized Person</label>
+      <select id="settings-auth-person-dropdown" style="width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    color: var(--text);
+    font-size: .95rem;
+    outline: none;
+    transition: border .2s;">
+        <option value="">Self</option>
+      </select>
+      <div style="font-size:.72rem;color:var(--muted);margin-top:2px">Select the person who is authorized to hide this date.</div>
+      <button class="btn-reset" id="btn-settings-authorized-submit" type="button" style="width:100%;margin-top:8px">Submit Authorized Person</button>
     </div>
 
     <button class="btn-apply" id="btn-settings-add" style="width:100%;margin-top:4px">Add Hide Date</button>
+
+    <div id="settings-user-create-panel" style="display:none;margin-top:16px;border:1px solid var(--border);padding:12px;border-radius:10px">
+      <div style="font-weight:600;margin-bottom:8px">Create User Account</div>
+      <div class="field">
+        <label>Employee Number</label>
+        <input id="new-user-employee-num" type="text" placeholder="e.g. 10015">
+      </div>
+      <div class="field">
+        <label>Employee Name</label>
+        <input id="new-user-employee-name" type="text" placeholder="e.g. Juan Dela Cruz">
+      </div>
+      <div class="field">
+        <label>Group</label>
+        <select id="new-user-group" style= "width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    color: var(--text);
+    font-size: .95rem;
+    outline: none;
+    transition: border .2s;">
+          <option value="ADMIN">ADMIN</option>
+          <option value="FA">FA</option>
+          <option value="PROCESS">PROCESS</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Temporary Password</label>
+        <input id="new-user-password" type="password" placeholder="Temporary password">
+      </div>
+      <div id="new-user-error" style="color:var(--danger);font-size:.83rem;min-height:18px;margin:4px 0 8px"></div>
+      <button class="btn-apply" id="btn-create-user" style="width:100%">Create Account</button>
+    </div>
 
     <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
       <div style="font-weight:600;margin-bottom:8px">Hidden Dates:</div>

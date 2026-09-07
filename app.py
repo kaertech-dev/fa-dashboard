@@ -16,6 +16,25 @@ app.secret_key = os.getenv("SECRET_KEY", "fa_secret_key_change_me")
 active_projects = ActiveProjects()
 station_log     = StationLog(active_projects)
 
+def normalize_hide_date(value):
+    """Return a hide date as YYYY-MM-DD for the fa_analysis DATE column."""
+    if value is None:
+        return None
+    if hasattr(value, "strftime"):
+        return value.strftime("%Y-%m-%d")
+
+    text = str(value).strip()
+    for date_format in (
+        "%Y-%m-%d",
+        "%a, %d %b %Y GMT",
+        "%d %b %Y GMT",
+    ):
+        try:
+            return datetime.strptime(text, date_format).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return None
+
 # ── Group-based access guard (defense in depth — UI also hides these) ─────────
 def require_group(*groups):
     """Restrict a mutating route to specific login groups. ADMIN always passes."""
@@ -192,10 +211,16 @@ def fa_lookup(serial_num):
 @app.route("/api/failure_analysis/options", methods=["GET"])
 def fa_options():
     try:
+        conn = get_fa_conn()
+        with conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT defect_cat FROM fa.fa_analysis WHERE defect_cat IS NOT NULL AND defect_cat != ''")
+            defect_rows = cur.fetchall()
+        conn.close()
+        defect_cat = [r.get("defect_cat") for r in defect_rows if r.get("defect_cat")]
         return jsonify({
             "ok": True,
             "proposed_action": get_distinct_values("proposed_action"),
-            "defect_cat": get_distinct_values("defect_cat"),
+            "defect_cat": defect_cat,
         })
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
@@ -359,6 +384,68 @@ def change_password():
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
+
+@app.route("/api/employees", methods=["GET"])
+def get_employees():
+    """Return all employee names for selection in admin settings."""
+    try:
+        conn = get_fa_conn()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT employee_num, employee_name, `group` FROM fa.userv2 WHERE employee_num IS NOT NULL ORDER BY employee_name, employee_num"
+            )
+            rows = cur.fetchall()
+        conn.close()
+        employees = [
+            {
+                "num": r.get("employee_num"),
+                "name": r.get("employee_name") or r.get("employee_num"),
+                "group": r.get("group") or "",
+            }
+            for r in rows
+        ]
+        return jsonify({"ok": True, "employees": employees})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB error: {e}"})
+
+
+@app.route("/api/create_user", methods=["POST"])
+@require_group("ADMIN")
+def create_user():
+    """Create a new FA/PROCESS/ADMIN user with a temporary password."""
+    data = request.get_json(silent=True) or {}
+    employee_num = (data.get("employee_num") or "").strip()
+    employee_name = (data.get("employee_name") or "").strip()
+    group = (data.get("group") or "").strip().upper()
+    temp_password = (data.get("temp_password") or "").strip()
+
+    if not employee_num or not employee_name or not temp_password:
+        return jsonify({"ok": False, "error": "Employee number, name, and temporary password are required."})
+    if group not in ("ADMIN", "FA", "PROCESS"):
+        return jsonify({"ok": False, "error": "Group must be ADMIN, FA, or PROCESS."})
+
+    try:
+        conn = get_fa_conn()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT employee_num FROM fa.userv2 WHERE employee_num = %s LIMIT 1",
+                (employee_num,),
+            )
+            if cur.fetchone():
+                conn.close()
+                return jsonify({"ok": False, "error": f"Employee number {employee_num} already exists."})
+
+            hashed_password = hash_badge(temp_password)
+            cur.execute(
+                "INSERT INTO fa.userv2 (employee_num, employee_name, badge, `group`) VALUES (%s, %s, %s, %s)",
+                (employee_num, employee_name, hashed_password, group),
+            )
+            conn.commit()
+        conn.close()
+        return jsonify({"ok": True, "employee_num": employee_num, "group": group})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB error: {e}"})
+
 # ── FA Data ────────────────────────────────────────────────────────────────────
 @app.route("/api/data", methods=["GET"])
 def data():
@@ -406,7 +493,168 @@ def get_open_fa():
             )
             rows = cur.fetchall()
         conn.close()
-        return jsonify({"ok":True, "rows":_clean_rows(rows)})
+        return jsonify({"ok": True, "rows": _clean_rows(rows)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB error: {e}"})
+
+
+@app.route("/api/hide_dates", methods=["GET"])
+def get_hide_dates():
+    """Fetch all hidden dates from fa.fa_analysis table."""
+    try:
+        conn = get_fa_conn()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT hide_dates, authorized_person FROM fa.fa_analysis WHERE hide_dates IS NOT NULL"
+            )
+            rows = cur.fetchall()
+        conn.close()
+        hide_dates = []
+        for row in rows:
+            date_value = normalize_hide_date(row.get("hide_dates"))
+            if date_value:
+                hide_dates.append({
+                    "dates": date_value,
+                    "authorized_person": row.get("authorized_person", ""),
+                })
+        return jsonify({"ok": True, "hide_dates": hide_dates})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB error: {e}"})
+
+
+@app.route("/api/authorized_persons", methods=["GET"])
+def get_authorized_persons():
+    """Fetch all employee names to choose from for hide-date authorization."""
+    try:
+        conn = get_fa_conn()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT employee_num, employee_name FROM fa.userv2 WHERE employee_num IS NOT NULL ORDER BY employee_name, employee_num"
+            )
+            rows = cur.fetchall()
+        conn.close()
+        persons = [
+            {"num": r["employee_num"], "name": r.get("employee_name", r["employee_num"])}
+            for r in rows
+        ]
+        return jsonify({"ok": True, "persons": persons})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB error: {e}"})
+
+@app.route("/api/settings_access", methods=["GET"])
+def settings_access():
+    """Return whether the signed-in user may manage dashboard hide dates."""
+    employee_num = session.get("employee_num")
+    if not employee_num:
+        return jsonify({"ok": True, "allowed": False})
+    if (session.get("group") or "").upper() == "ADMIN":
+        return jsonify({"ok": True, "allowed": True})
+
+    try:
+        conn = get_fa_conn()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM fa.fa_analysis
+                WHERE authorized_person = %s
+                LIMIT 1
+                """,
+                (employee_num,),
+            )
+            allowed = cur.fetchone() is not None
+        conn.close()
+        return jsonify({"ok": True, "allowed": allowed})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB error: {e}"})
+
+@app.route("/api/authorized_person_save", methods=["POST"])
+@require_group("ADMIN")
+def save_authorized_person():
+    """Record an employee as authorized to manage dashboard settings."""
+    data = request.get_json(silent=True) or {}
+    authorized_person = str(data.get("authorized_person") or "").strip()
+    if not authorized_person:
+        return jsonify({"ok": False, "error": "Please select an authorized person."})
+
+    try:
+        conn = get_fa_conn()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT employee_num FROM fa.userv2 WHERE employee_num = %s LIMIT 1",
+                (authorized_person,),
+            )
+            if cur.fetchone() is None:
+                return jsonify({"ok": False, "error": "Employee was not found."})
+            cur.execute(
+                "SELECT 1 FROM fa.fa_analysis WHERE authorized_person = %s LIMIT 1",
+                (authorized_person,),
+            )
+            if cur.fetchone() is None:
+                cur.execute(
+                    "INSERT INTO fa.fa_analysis (authorized_person) VALUES (%s)",
+                    (authorized_person,),
+                )
+            conn.commit()
+        conn.close()
+        return jsonify({"ok": True, "authorized_person": authorized_person})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB error: {e}"})
+
+
+@app.route("/api/hide_dates_save", methods=["POST"])
+def save_hide_dates():
+    """Append missing hidden-date rows for one authorized person."""
+    data = request.get_json(silent=True) or {}
+    hide_dates_str = str(data.get("hide_dates") or "").strip()
+    authorized_person = str(data.get("authorized_person") or "").strip() or session.get("employee_num")
+    raw_hide_dates = [date.strip() for date in hide_dates_str.split(",") if date.strip()]
+    hide_dates = []
+
+    for date in raw_hide_dates:
+        normalized_date = normalize_hide_date(date)
+        if not normalized_date:
+            return jsonify({"ok": False, "error": f"Invalid hide date: {date}"})
+        hide_dates.append(normalized_date)
+
+    if not session.get("employee_num"):
+        return jsonify({"ok": False, "error": "Not logged in."}), 401
+    is_admin = (session.get("group") or "").upper() == "ADMIN"
+    if not is_admin and authorized_person != session.get("employee_num"):
+        return jsonify({"ok": False, "error": "You are not authorized to update these settings."}), 403
+
+    try:
+        conn = get_fa_conn()
+        with conn.cursor() as cur:
+            if not is_admin:
+                cur.execute(
+                    "SELECT 1 FROM fa.fa_analysis WHERE authorized_person = %s LIMIT 1",
+                    (session.get("employee_num"),),
+                )
+                if cur.fetchone() is None:
+                    conn.close()
+                    return jsonify({"ok": False, "error": "You are not authorized to update these settings."}), 403
+            for hide_date in hide_dates:
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM fa.fa_analysis
+                    WHERE hide_dates = %s AND authorized_person = %s
+                    LIMIT 1
+                    """,
+                    (hide_date, authorized_person),
+                )
+                if cur.fetchone() is None:
+                    cur.execute(
+                        """
+                        INSERT INTO fa.fa_analysis (hide_dates, authorized_person)
+                        VALUES (%s, %s)
+                        """,
+                        (hide_date, authorized_person)
+                    )
+            conn.commit()
+        conn.close()
+        return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 

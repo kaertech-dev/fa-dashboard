@@ -1,6 +1,8 @@
 // fa_dashboard.js
 // ── STATE ─────────────────────────────────────────────────────────────────────
 let allData = [], filteredData = [], page = 1;
+let dbHideDates = [];  // Hide dates from database (fa_analysis table)
+let settingsAccess = false;
 const PAGE_SIZE = 50;
 const COLORS = ['#f78166','#79c0ff','#56d364','#d29922','#bc8cff','#58a6ff','#ff7b72','#39d353','#ffa657','#a5d6ff'];
 
@@ -87,10 +89,36 @@ function isLunchTime(datetimeStr) {
 }
 
 function getHolidaysAndMeetings() {
+  // Parse database hide dates into entries format
+  // dbHideDates is fetched from backend on dashboard load
+  const entries = [];
+  dbHideDates.forEach(item => {
+    try {
+      const dates = item.dates.split(',').map(d => d.trim());
+      dates.forEach(date => {
+        entries.push({
+          date,
+          reason: 'Holiday/Meeting',
+          authorizedPerson: item.authorized_person || '',
+          createdAt: new Date().toISOString()
+        });
+      });
+    } catch (e) {
+      // Skip malformed entries
+    }
+  });
+  return entries;
+}
+
+async function loadHideDatesFromDB() {
   try {
-    return JSON.parse(localStorage.getItem('fa_holidays_meetings') || '[]');
-  } catch {
-    return [];
+    const res = await fetch('/api/hide_dates');
+    const json = await res.json();
+    if (json.ok && json.hide_dates) {
+      dbHideDates = json.hide_dates;
+    }
+  } catch (e) {
+    console.error('Failed to load hide dates:', e);
   }
 }
 
@@ -105,10 +133,8 @@ function shouldHideRecord(record) {
   const isAdmin = (localStorage.getItem('fa_group') || '').toUpperCase() === 'ADMIN';
 
   const holidays = getHolidaysAndMeetings();
-  const userNum = String(localStorage.getItem('fa_user_num') || '').trim();
   const hasConfiguredHide = holidays.some(entry => {
-    const authorizedPerson = String(entry.authorizedPerson || '').trim();
-    return entry.date === dateStr && (!authorizedPerson || authorizedPerson === userNum);
+    return entry.date === dateStr;
   });
 
   // Explicit holiday/meeting assignments apply even when the viewer is an admin.
@@ -191,6 +217,7 @@ async function doLogin() {
       localStorage.setItem('fa_user_num', json.user.employee_num || '');
       localStorage.setItem('fa_group', group);
       applyGroupAccess(group);
+      await loadSettingsAccess();
       document.getElementById('login-screen').style.display  = 'none';
       document.getElementById('dashboard-screen').style.display = 'block';
       await loadAndRender();
@@ -225,6 +252,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (savedUser) {
     document.getElementById('user-label').textContent = savedUser;
     applyGroupAccess(savedGroup);
+    await loadSettingsAccess();
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('dashboard-screen').style.display = 'block';
 
@@ -263,54 +291,189 @@ document.getElementById('btn-settings-close-btn').addEventListener('click', () =
 const isAdminUser = () => (localStorage.getItem('fa_group') || '').toUpperCase() === 'ADMIN';
 
 function renderSettingsModal() {
+  const admin = isAdminUser();
   const settingsAuthField = document.getElementById('settings-auth-person-field');
-  settingsAuthField.style.display = isAdminUser() ? 'block' : 'none';
+  const userCreatePanel = document.getElementById('settings-user-create-panel');
+
+  settingsAuthField.style.display = admin ? 'block' : 'none';
+  if (userCreatePanel) userCreatePanel.style.display = admin ? 'block' : 'none';
+
+  if (admin) {
+    loadAuthorizedPersons();
+  }
+
   updateSettingsHiddenList();
+}
+
+async function loadAuthorizedPersons() {
+  try {
+    const res = await fetch('/api/authorized_persons');
+    const json = await res.json();
+    if (json.ok && json.persons) {
+      const select = document.getElementById('settings-auth-person-dropdown');
+      if (select) {
+        select.innerHTML = '<option value="">Self</option>';
+        json.persons.forEach(person => {
+          const opt = document.createElement('option');
+          opt.value = person.num;
+          opt.textContent = `${person.name} (${person.num})`;
+          select.appendChild(opt);
+        });
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load authorized persons:', e);
+  }
+}
+
+async function loadSettingsAccess() {
+  try {
+    const res = await fetch('/api/settings_access');
+    const json = await res.json();
+    settingsAccess = Boolean(json.ok && json.allowed);
+  } catch (e) {
+    settingsAccess = false;
+    console.error('Failed to check settings access:', e);
+  }
+  const settingsButton = document.getElementById('btn-settings');
+  if (settingsButton) settingsButton.style.display = settingsAccess ? '' : 'none';
 }
 
 function updateSettingsHiddenList() {
   const list = document.getElementById('settings-hidden-list');
   const holidays = getHolidaysAndMeetings();
-  const userNum = localStorage.getItem('fa_user_num') || '';
 
   if (!holidays.length) {
     list.innerHTML = '<div style="color:var(--muted)">No hidden dates yet</div>';
     return;
   }
 
-  const userHolidays = holidays.filter(h => !h.authorizedPerson || h.authorizedPerson === userNum || isAdminUser());
+  list.innerHTML = holidays.map((h, idx) => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
+      <span>${h.date} - ${h.reason || 'N/A'}${h.authorizedPerson ? ' (' + h.authorizedPerson + ')' : ''}</span>
+    </div>
+  `).join('');
+}
 
-  if (!userHolidays.length) {
-    list.innerHTML = '<div style="color:var(--muted)">No hidden dates</div>';
+async function saveHideDatesToDB(changedAuthorizedPerson = null) {
+  try {
+    const items = changedAuthorizedPerson
+      ? [dbHideDates.find(item => item.authorized_person === changedAuthorizedPerson) || {
+          dates: '',
+          authorized_person: changedAuthorizedPerson
+        }]
+      : dbHideDates;
+    for (const item of items) {
+      const authPerson = item.authorized_person || localStorage.getItem('fa_user_num');
+      const res = await fetch('/api/hide_dates_save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          hide_dates: item.dates,
+          authorized_person: authPerson
+        })
+      });
+
+      const json = await res.json();
+      if (!json.ok) {
+        console.error(`Failed to save hide dates for ${authPerson}:`, json.error);
+        return false;
+      }
+    }
+    return true;
+  } catch (e) {
+    console.error('Failed to save hide dates:', e);
+    return false;
+  }
+}
+
+document.getElementById('btn-settings-authorized-submit').addEventListener('click', async () => {
+  const err = document.getElementById('settings-error');
+  const select = document.getElementById('settings-auth-person-dropdown');
+  const authorizedPerson = select ? select.value.trim() : '';
+  err.textContent = '';
+  err.style.color = 'var(--danger)';
+
+  if (!authorizedPerson) {
+    err.textContent = 'Please select an authorized person.';
     return;
   }
 
-  list.innerHTML = userHolidays.map((h, idx) => `
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
-      <span>${h.date} - ${h.reason || 'N/A'}${h.authorizedPerson ? ' (' + h.authorizedPerson + ')' : ''}</span>
-      <button class="btn-reset" style="padding:2px 8px;font-size:.8rem" data-idx="${idx}">Remove</button>
-    </div>
-  `).join('');
-
-  list.querySelectorAll('button[data-idx]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const idx = parseInt(btn.dataset.idx);
-      holidays.splice(idx, 1);
-      localStorage.setItem('fa_holidays_meetings', JSON.stringify(holidays));
-      updateSettingsHiddenList();
-      applyFilters();
+  try {
+    const res = await fetch('/api/authorized_person_save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ authorized_person: authorizedPerson })
     });
-  });
-}
+    const json = await res.json();
+    if (!json.ok) {
+      err.textContent = json.error || 'Could not save authorized person.';
+      return;
+    }
+    err.style.color = 'var(--success)';
+    err.textContent = 'Authorized person saved.';
+    await loadHideDatesFromDB();
+    updateSettingsHiddenList();
+    loadSettingsAccess();
+  } catch (e) {
+    err.textContent = 'Could not save authorized person: ' + e.message;
+  }
+});
 
-document.getElementById('btn-settings-add').addEventListener('click', () => {
+document.getElementById('btn-create-user').addEventListener('click', async () => {
+  const err = document.getElementById('new-user-error');
+  err.textContent = '';
+
+  const employeeNum = document.getElementById('new-user-employee-num').value.trim();
+  const employeeName = document.getElementById('new-user-employee-name').value.trim();
+  const group = document.getElementById('new-user-group').value.trim();
+  const tempPassword = document.getElementById('new-user-password').value.trim();
+
+  if (!employeeNum || !employeeName || !tempPassword) {
+    err.textContent = 'Employee number, name, and a temporary password are required.';
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/create_user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        employee_num: employeeNum,
+        employee_name: employeeName,
+        group,
+        temp_password: tempPassword
+      })
+    });
+
+    const json = await res.json();
+    if (!json.ok) {
+      err.textContent = json.error || 'Could not create user.';
+      return;
+    }
+
+    document.getElementById('new-user-employee-num').value = '';
+    document.getElementById('new-user-employee-name').value = '';
+    document.getElementById('new-user-password').value = '';
+    document.getElementById('new-user-group').value = 'ADMIN';
+    err.textContent = 'User created successfully.';
+    err.style.color = 'var(--success)';
+    loadAuthorizedPersons();
+  } catch (e) {
+    err.style.color = 'var(--danger)';
+    err.textContent = 'Could not create user: ' + e.message;
+  }
+});
+
+document.getElementById('btn-settings-add').addEventListener('click', async () => {
   const err = document.getElementById('settings-error');
   err.textContent = '';
 
   const fromDate = document.getElementById('settings-date-from').value.trim();
   const toDate = document.getElementById('settings-date-to').value.trim();
   const reason = document.getElementById('settings-hide-reason').value.trim();
-  const authPerson = document.getElementById('settings-auth-person').value.trim();
+  const authPersonSelect = document.getElementById('settings-auth-person-dropdown');
+  const authPerson = authPersonSelect ? authPersonSelect.value.trim() : '';
 
   if (!fromDate || !toDate) { err.textContent = 'Please select both From and To dates.'; return; }
   if (fromDate > toDate) { err.textContent = 'Date From cannot be after Date To.'; return; }
@@ -319,34 +482,45 @@ document.getElementById('btn-settings-add').addEventListener('click', () => {
     return;
   }
 
-  const holidays = getHolidaysAndMeetings();
-  const userNum = localStorage.getItem('fa_user_num') || '';
   const start = new Date(`${fromDate}T00:00:00`);
   const end = new Date(`${toDate}T00:00:00`);
-  const authorizedPerson = isAdminUser() && authPerson ? authPerson : userNum;
-  let addedCount = 0;
+  const datesInRange = [];
 
   for (const current = new Date(start); current <= end; current.setDate(current.getDate() + 1)) {
     const dateStr = current.toISOString().slice(0, 10);
-    if (!isWeekend(dateStr) && !holidays.some(entry => entry.date === dateStr && entry.authorizedPerson === authorizedPerson)) {
-      holidays.push({
-      date: dateStr,
-      reason,
-      authorizedPerson,
-      createdBy: userNum,
-      createdAt: new Date().toISOString()
-      });
-      addedCount += 1;
+    if (!isWeekend(dateStr)) {
+      datesInRange.push(dateStr);
     }
   }
 
-  if (!addedCount) { err.textContent = 'No new weekdays in selected range.'; return; }
-  localStorage.setItem('fa_holidays_meetings', JSON.stringify(holidays));
+  if (!datesInRange.length) { err.textContent = 'No new weekdays in selected range.'; return; }
+
+  // Update dbHideDates with new dates
+  const authKey = authPerson || localStorage.getItem('fa_user_num');
+  const existingDates = dbHideDates
+    .filter(item => item.authorized_person === authKey)
+    .flatMap(item => String(item.dates || '').split(',').map(date => date.trim()))
+    .filter(Boolean);
+  dbHideDates = dbHideDates.filter(item => item.authorized_person !== authKey);
+  dbHideDates.push({
+    dates: [...new Set([...existingDates, ...datesInRange])].sort().join(','),
+    authorized_person: authKey
+  });
+
+  // Save to backend
+  const saved = await saveHideDatesToDB(authKey);
+  if (!saved) {
+    err.textContent = 'Could not save hide dates.';
+    return;
+  }
+  await loadHideDatesFromDB();
 
   document.getElementById('settings-date-from').value = '';
   document.getElementById('settings-date-to').value = '';
   document.getElementById('settings-hide-reason').value = '';
-  document.getElementById('settings-auth-person').value = '';
+  if (authPersonSelect) {
+    authPersonSelect.value = '';
+  }
 
   updateSettingsHiddenList();
   applyFilters();
@@ -417,6 +591,9 @@ async function loadAndRender() {
   loader(true);
 
   try {
+    // Load hide dates from database before fetching main data
+    await loadHideDatesFromDB();
+
     const res = await fetch('/api/data');
 
     if (!res.ok) {
@@ -435,6 +612,7 @@ async function loadAndRender() {
     page = 1;
 
     populateFilters();
+    restoreFilterState();
     applyFilters();
 
   } catch (e) {
@@ -495,6 +673,42 @@ function startAutoRefresh() {
 }
 
 // ── FILTERS ───────────────────────────────────────────────────────────────────
+function getFilterStorageKey() {
+  const userNum = localStorage.getItem('fa_user_num') || 'guest';
+  return `fa_dashboard_filters_${userNum}`;
+}
+
+function saveFilterState() {
+  const state = {};
+  ['f-product', 'f-model', 'f-station', 'f-status', 'f-from', 'f-to'].forEach(id => {
+    state[id] = document.getElementById(id).value;
+  });
+  localStorage.setItem(getFilterStorageKey(), JSON.stringify(state));
+}
+
+function restoreFilterState() {
+  let state;
+  try {
+    state = JSON.parse(localStorage.getItem(getFilterStorageKey()) || '{}');
+  } catch (e) {
+    state = {};
+  }
+
+  const product = state['f-product'] || '';
+  const model = state['f-model'] || '';
+  const station = state['f-station'] || '';
+  document.getElementById('f-product').value = product;
+  refreshCascadingFilters();
+  document.getElementById('f-model').value = model;
+  refreshCascadingFilters();
+  document.getElementById('f-station').value = station;
+  document.getElementById('f-status').value = state['f-status'] || '';
+  refreshCascadingFilters();
+  document.getElementById('f-from').value = state['f-from'] || '';
+  document.getElementById('f-to').value = state['f-to'] || '';
+  refreshCascadingFilters();
+}
+
 function populateFilters() {
   refreshCascadingFilters();
 }
@@ -579,13 +793,16 @@ document.getElementById('f-product').addEventListener('change', () => {
   document.getElementById('f-model').value = '';
   document.getElementById('f-station').value = '';
   refreshCascadingFilters();
+  saveFilterState();
 });
 document.getElementById('f-model').addEventListener('change', () => {
   document.getElementById('f-station').value = '';
   refreshCascadingFilters();
+  saveFilterState();
 });
 document.getElementById('f-station').addEventListener('change', () => {
   refreshCascadingFilters();
+  saveFilterState();
 });
 document.getElementById('f-from').addEventListener('change', () => {
   const fromValue = document.getElementById('f-from').value;
@@ -596,6 +813,7 @@ document.getElementById('f-from').addEventListener('change', () => {
   }
 
   refreshCascadingFilters();
+  saveFilterState();
 });
 document.getElementById('f-to').addEventListener('change', () => {
   const fromValue = document.getElementById('f-from').value;
@@ -606,14 +824,16 @@ document.getElementById('f-to').addEventListener('change', () => {
   }
 
   refreshCascadingFilters();
+  saveFilterState();
 });
 
-document.getElementById('btn-apply').addEventListener('click',  () => { page=1; applyFilters(); });
+document.getElementById('btn-apply').addEventListener('click',  () => { page=1; saveFilterState(); applyFilters(); });
 document.getElementById('btn-reset').addEventListener('click',  () => {
   ['f-product','f-model','f-station','f-status'].forEach(id => document.getElementById(id).value='');
   document.getElementById('f-from').value = '';
   document.getElementById('f-to').value   = '';
   refreshCascadingFilters();
+  localStorage.removeItem(getFilterStorageKey());
   page=1; applyFilters();
 });
 

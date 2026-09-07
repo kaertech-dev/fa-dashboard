@@ -1,0 +1,77 @@
+Failure Analysis
+Landing Page for Endorsement to FA
+Login User
+	-- Authorized person can only have access to signed in.
+
+Key Feature
+Endorsement page
+This will be the first
+selection of product, model and station.
+input:
+serial_num
+	-- check if the serial_num have actually record in selected dropdown
+po_num
+	-- auto-generate based on the serial_num that is been recorded in schema
+
+
+
+Landing Page for Failure Analysis Traceability
+Login User
+	-- Authorized person can only have access to signed in.
+
+Introduction
+This web page is the transition of graphical user interface into web application User interface of failure analysis to access different authorized engineers. It provides the data that has been endorse, analyse, rework and return page into dashboard to monitor all data record based on database.
+
+Key Feature
+	-- Failure Analysis Page
+	-- Rework
+	-- Return
+
+failure analysis page
+input:
+cause of failure
+propose action
+affected component
+dropdown:
+defect category
+fa_calse
+	-- Auto generate FA{year}{julian_date}{auto_increment}
+fa class(level of difficulty)
+
+
+
+backend
+Autogenerate
+fa_class = FA{year}{julian_date}{increment:3}
+
+GUI - new
+meron silang GUI na iinput
+	-- saving pdf
+	-- auto-generate pdf
+
+check the serial in the selected product, model and station
+scan the serial and get its test failure by getting the data under "remarks" header
+
+endorsement modal:
+logic
+"group" header types:
+FA
+PROCESS
+ADMIN
+
+visibility:
+FA = endorsement and failure analysis modal
+PROCESS = Rework and Return modal
+
+
+
+failure mode: production ang nagsasabi kung anong failure ng unit. pwedeng automatic input based sa remarks, if walang remarks, the user can input na kung anong magiging failure nun. then marerecord sa test_failure
+
+new patch in endorsement modal:
+scanned serial and autosearch in database. get its last station log and auto fill the product, model and station. get its remarks to to see in the text display and record it in the test_failure in "fa.main". make the user to edit the station so that, whenever they type in the station, it will record under station in "fa.main"
+
+
+dashboard(additional)
+pareto - pinaka maraming problema to paonti
+e.g vrpo same failure mode
+missing component -r1

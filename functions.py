@@ -67,7 +67,7 @@ def get_fa_by_serial(serial_num: str):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT * FROM fa.main_copy WHERE serial_num = %s LIMIT 1",
+                "SELECT * FROM fa.main WHERE serial_num = %s LIMIT 1",
                 (serial_num,),
             )
             row = cur.fetchone()
@@ -123,7 +123,7 @@ def get_distinct_values(column: str, limit: int = 200):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                f"SELECT DISTINCT {column} AS v FROM fa.main_copy "
+                f"SELECT DISTINCT {column} AS v FROM fa.main "
                 f"WHERE {column} IS NOT NULL AND {column} <> '' "
                 f"ORDER BY {column} LIMIT %s",
                 (limit,),
@@ -143,7 +143,7 @@ def generate_fa_case(conn):
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT fa_case FROM fa.main_copy
+            SELECT fa_case FROM fa.main
             WHERE fa_case LIKE %s
             ORDER BY fa_case DESC
             LIMIT 1
@@ -181,7 +181,7 @@ def update_fa(serial_num: str, fields: dict):
             set_clause = ", ".join(f"{c} = %s" for c in set_cols)
             values = [fields[c] for c in set_cols] + [serial_num]
             cur.execute(
-                f"UPDATE fa.main_copy SET {set_clause} WHERE serial_num = %s",
+                f"UPDATE fa.main SET {set_clause} WHERE serial_num = %s",
                 values,
             )
             conn.commit()
@@ -204,7 +204,7 @@ def update_rework(serial_num: str, fields: dict):
             set_clause = ", ".join(f"{c} = %s" for c in set_cols)
             values = [fields[c] for c in set_cols] + [serial_num]
             cur.execute(
-                f"UPDATE fa.main_copy SET {set_clause} WHERE serial_num = %s",
+                f"UPDATE fa.main SET {set_clause} WHERE serial_num = %s",
                 values,
             )
             conn.commit()
@@ -225,7 +225,7 @@ def return_rework(serial_num: str, fields: dict):
         with conn.cursor() as cur:
             set_clause = ", ".join(f"{c} = %s" for c in set_cols)
             values = [fields[c] for c in set_cols] + [serial_num]
-            cur.execute(f"UPDATE fa.main_copy SET {set_clause} WHERE serial_num = %s",
+            cur.execute(f"UPDATE fa.main SET {set_clause} WHERE serial_num = %s",
             values,
             )
             conn.commit()
@@ -235,7 +235,7 @@ def return_rework(serial_num: str, fields: dict):
 
 def create_or_update_endorsement(serial_num: str, fields: dict):
     """
-    Endorsement step: register a rejected unit into fa.main_copy.
+    Endorsement step: register a rejected unit into fa.main.
 
     - If the serial number already exists (re-endorsed / re-rejected), refresh
       its endorsement-stage fields.
@@ -258,7 +258,7 @@ def create_or_update_endorsement(serial_num: str, fields: dict):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT serial_num FROM fa.main_copy WHERE serial_num = %s LIMIT 1",
+                "SELECT serial_num FROM fa.main WHERE serial_num = %s LIMIT 1",
                 (serial_num,),
             )
             exists = cur.fetchone()
@@ -267,7 +267,7 @@ def create_or_update_endorsement(serial_num: str, fields: dict):
                 set_clause = ", ".join(f"{c} = %s" for c in fields)
                 values = list(fields.values()) + [serial_num]
                 cur.execute(
-                    f"UPDATE fa.main_copy SET {set_clause} WHERE serial_num = %s",
+                    f"UPDATE fa.main SET {set_clause} WHERE serial_num = %s",
                     values,
                 )
             else:
@@ -275,7 +275,7 @@ def create_or_update_endorsement(serial_num: str, fields: dict):
                 placeholders = ", ".join(["%s"] * len(cols))
                 values = [serial_num] + list(fields.values())
                 cur.execute(
-                    f"INSERT INTO fa.main_copy ({', '.join(cols)}) VALUES ({placeholders})",
+                    f"INSERT INTO fa.main ({', '.join(cols)}) VALUES ({placeholders})",
                     values,
                 )
             conn.commit()
