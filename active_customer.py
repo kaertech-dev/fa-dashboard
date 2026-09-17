@@ -13,6 +13,8 @@ _CACHE = {
     'tester_records': (None, 0),
     'process_records': (None, 0),
     'pe_users': (None, 0),
+    'table_columns': {},
+    'run_units': {},
 }
 _CACHE_TTL = 300  # seconds
 
@@ -112,6 +114,75 @@ class ActiveProjects:
         data = self._model.get_stations_for_model(product_id, model_name)
         _CACHE['stations'][key] = (data, now)
         return data
+
+    def count_run_units(self, date_from, date_to, product=None, model=None, station=None):
+        """Count distinct scanned serials in the selected production tables."""
+        cache_key = (str(date_from), str(date_to), product, model, station)
+        cached = _CACHE['run_units'].get(cache_key)
+        now = time.time()
+        if cached and now - cached[1] < 15:
+            return cached[0]
+
+        total_run_units = 0
+        products = self.get_active_products()
+        if product:
+            products = [item for item in products if item['id'] == product]
+
+        table_specs = []
+        for product_item in products:
+            product_id = product_item['id']
+            models = self.get_models_by_product(product_id)
+            if model:
+                models = [item for item in models if item['id'] == model]
+            for model_item in models:
+                model_id = model_item['id']
+                stations = self.get_stations_by_model(product_id, model_id)
+                if station:
+                    stations = [item for item in stations if item['id'] == station]
+                for station_item in stations:
+                    table_specs.append((product_id, model_id, station_item['id']))
+
+        def count_table(spec):
+            product_id, model_id, station_id = spec
+            table = f"{model_id}_{station_id}"
+            metadata_key = (product_id, table)
+            columns = _CACHE['table_columns'].get(metadata_key)
+            if columns is None:
+                try:
+                    with projects_engine.connect() as conn:
+                        columns = [row[0] for row in conn.execute(
+                            text(f"SHOW COLUMNS FROM `{product_id}`.`{table}`")
+                        )]
+                    _CACHE['table_columns'][metadata_key] = columns
+                except Exception as e:
+                    print(f"[RunUnits] columns '{product_id}'.'{table}': {e}")
+                    return 0
+
+            serial_col = next((column for column in columns if column.lower() in StationLog._SERIAL_CANDIDATES), None)
+            date_col = next((column for column in columns if column.lower() in StationLog._DATETIME_CANDIDATES), None)
+            if not serial_col or not date_col:
+                return 0
+            try:
+                with projects_engine.connect() as conn:
+                    result = conn.execute(text(
+                        f"SELECT COUNT(DISTINCT `{serial_col}`) AS run_units "
+                        f"FROM `{product_id}`.`{table}` "
+                        f"WHERE `{date_col}` >= :date_from AND `{date_col}` < :date_to "
+                        f"AND `{serial_col}` IS NOT NULL AND `{serial_col}` <> ''"
+                    ), {"date_from": date_from, "date_to": date_to})
+                    row = result.first()
+                    return int(row[0] or 0) if row else 0
+            except Exception as e:
+                print(f"[RunUnits] query '{product_id}'.'{table}': {e}")
+                return 0
+
+        # Query one table at a time. The dashboard can have many station tables,
+        # and parallel connections exhaust the shared SQLAlchemy pool under Gunicorn.
+        for table_spec in table_specs:
+            total_run_units += count_table(table_spec)
+
+        _CACHE['run_units'][cache_key] = (total_run_units, now)
+        return total_run_units
 
 # ── StationLog ────────────────────────────────────────────────────────────────
 

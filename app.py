@@ -1,6 +1,10 @@
 # app.py
 import os
+import time
+import gzip
+from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
+from io import BytesIO
 from flask import Flask, request, jsonify, render_template, session, redirect
 from functions import (
     get_fa_conn, authenticate, hash_badge,
@@ -8,13 +12,29 @@ from functions import (
     create_or_update_endorsement,
 )
 from active_customer import ActiveProjects, StationLog
-from datetime import datetime
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY", "fa_secret_key_change_me")
+app.secret_key = os.environ["SECRET_KEY"]
 
 active_projects = ActiveProjects()
 station_log     = StationLog(active_projects)
+_dashboard_data_cache = {"expires_at": 0, "payload": None}
+_run_units_jobs = {}
+_run_units_executor = ThreadPoolExecutor(max_workers=1)
+
+@app.after_request
+def compress_json_response(response):
+    """Compress large JSON responses when the client advertises gzip support."""
+    accepts_gzip = "gzip" in request.headers.get("Accept-Encoding", "").lower()
+    content_type = response.headers.get("Content-Type", "")
+    if accepts_gzip and content_type.startswith("application/json") and response.content_length and response.content_length > 1024:
+        compressed = gzip.compress(response.get_data())
+        response.set_data(compressed)
+        response.headers["Content-Encoding"] = "gzip"
+        response.headers["Content-Length"] = str(len(compressed))
+        response.headers.add("Vary", "Accept-Encoding")
+    return response
 
 def normalize_hide_date(value):
     """Return a hide date as YYYY-MM-DD for the fa_analysis DATE column."""
@@ -75,9 +95,13 @@ def login():
         row = authenticate(emp, badge)
         if row:
             group = row.get("user_group", "") or ""
+            effective_dt = row.get("dataeffective_datetime")
             session['employee_num']  = row['employee_num']
             session['employee_name'] = row.get('employee_name', emp)
             session['group']         = group
+            session['date_effective'] = (
+                effective_dt.strftime("%Y-%m-%d %H:%M:%S") if effective_dt else None
+            )
             return jsonify({"ok": True, "user": {
                 "employee_num": row["employee_num"],
                 "employee_name": row.get("employee_name", emp),
@@ -87,7 +111,7 @@ def login():
             return jsonify({"ok": False, "error": "Invalid employee number or badge."})
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
-
+    
 # =================================================================================================endorsement
 @app.route("/api/endorsement/lookup/<serial_num>", methods=["GET"])
 def endorsement_lookup(serial_num):
@@ -449,20 +473,54 @@ def create_user():
 # ── FA Data ────────────────────────────────────────────────────────────────────
 @app.route("/api/data", methods=["GET"])
 def data():
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+    date_effective = session.get("date_effective")  # None if not set for this user
+
+    cache_key = (date_from, date_to, date_effective)
+    now = time.time()
+    if _dashboard_data_cache.get("key") == cache_key and _dashboard_data_cache["payload"] is not None and now < _dashboard_data_cache["expires_at"]:
+        return jsonify(_dashboard_data_cache["payload"])
+
+    date_clause = ""
+    date_params = []
+    if not date_from or not date_to:
+        return jsonify({"ok": False, "error": "Both date_from and date_to are required."}), 400
+    if date_from or date_to:
+        try:
+            start = datetime.strptime(date_from, "%Y-%m-%d")
+            end = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
+        except ValueError:
+            return jsonify({"ok": False, "error": "Dates must use YYYY-MM-DD."}), 400
+        if date_from > date_to:
+            return jsonify({"ok": False, "error": "date_from cannot be after date_to."}), 400
+
+        # Clamp the requested start to the user's effective date, if one is set.
+        # date_effective is stored as "%Y-%m-%d %H:%M:%S" — parse it fully,
+        # then compare as datetimes, not as mismatched strings.
+        if date_effective:
+            effective_start = datetime.strptime(date_effective, "%Y-%m-%d %H:%M:%S")
+            if start < effective_start:
+                start = effective_start
+
+        date_clause = "WHERE fa_records.faendorse_datetime >= %s AND fa_records.faendorse_datetime < %s"
+        date_params = [start, end]
+
     try:
         conn = get_fa_conn()
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT fa_records.*, fa_links.url
-                FROM fa.main_copy AS fa_records
+                FROM fa.main AS fa_records
                 LEFT JOIN (
                     SELECT fa_case, MAX(link) AS url
                     FROM fa.url
                     GROUP BY fa_case
                 ) AS fa_links ON fa_links.fa_case = fa_records.fa_case
+                {date_clause}
                 ORDER BY fa_records.faendorse_datetime DESC
-                """
+                """, date_params
             )
             rows = cur.fetchall()
         conn.close()
@@ -472,9 +530,94 @@ def data():
                 k: (str(v) if v is not None and not isinstance(v, (int, float, str, bool)) else v)
                 for k, v in r.items()
             })
-        return jsonify({"ok": True, "rows": clean})
+        payload = {"ok": True, "rows": clean}
+        _dashboard_data_cache["key"] = cache_key
+        _dashboard_data_cache["payload"] = payload
+        _dashboard_data_cache["expires_at"] = now + 5
+        return jsonify(payload)
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
+
+@app.route("/api/data_dates", methods=["GET"])
+def data_dates():
+    """Return available FA endorsement dates without sending full records."""
+    date_effective = session.get("date_effective")
+    try:
+        conn = get_fa_conn()
+        with conn.cursor() as cur:
+            if date_effective:
+                cur.execute(
+                    """
+                    SELECT DISTINCT DATE(faendorse_datetime) AS fa_date
+                    FROM fa.main
+                    WHERE faendorse_datetime IS NOT NULL
+                      AND faendorse_datetime >= %s
+                    ORDER BY fa_date DESC
+                    """,
+                    (date_effective,)
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT DISTINCT DATE(faendorse_datetime) AS fa_date
+                    FROM fa.main
+                    WHERE faendorse_datetime IS NOT NULL
+                    ORDER BY fa_date DESC
+                    """
+                )
+            dates = [row["fa_date"].strftime("%Y-%m-%d") for row in cur.fetchall()]
+        conn.close()
+        return jsonify({"ok": True, "dates": dates})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB error: {e}"})
+
+@app.route("/api/run_units", methods=["GET"])
+def run_units():
+    """Count distinct production serials for a dashboard date/filter set."""
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+    product = request.args.get("product", "").strip() or None
+    model = request.args.get("model", "").strip() or None
+    station = request.args.get("station", "").strip() or None
+
+    if not date_from or not date_to:
+        return jsonify({"ok": True, "run_units": 0})
+    try:
+        start = datetime.strptime(date_from, "%Y-%m-%d")
+        end = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
+    except ValueError:
+        return jsonify({"ok": False, "error": "Dates must use YYYY-MM-DD."}), 400
+    if date_from > date_to:
+        return jsonify({"ok": False, "error": "date_from cannot be after date_to."}), 400
+    cache_key = (date_from, date_to, product, model, station)
+    job = _run_units_jobs.get(cache_key)
+    if job is None:
+        job = {
+            "value": None,
+            "refreshing": False,
+            "updated_at": 0,
+        }
+        _run_units_jobs[cache_key] = job
+
+    if not job["refreshing"] and time.time() - job["updated_at"] >= 15:
+        job["refreshing"] = True
+
+        def refresh_run_units():
+            try:
+                job["value"] = active_projects.count_run_units(start, end, product, model, station)
+                job["updated_at"] = time.time()
+            except Exception as exc:
+                print(f"[RunUnits] background refresh failed: {exc}")
+            finally:
+                job["refreshing"] = False
+
+        _run_units_executor.submit(refresh_run_units)
+
+    return jsonify({
+        "ok": True,
+        "run_units": job["value"],
+        "refreshing": job["refreshing"],
+    })
     
 def _clean_rows(rows):
     return [
@@ -489,7 +632,7 @@ def get_open_fa():
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT serial_num, product, model, po_num, station, test_failure, pro_endorser, faendorse_datetime FROM fa.main_copy WHERE farepair_status IN (1) ORDER BY faendorse_datetime DESC"
+                "SELECT serial_num, product, model, po_num, station, test_failure, pro_endorser, faendorse_datetime FROM fa.main WHERE farepair_status IN (1) ORDER BY faendorse_datetime DESC"
             )
             rows = cur.fetchall()
         conn.close()
@@ -664,7 +807,7 @@ def get_wip_fa():
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT * FROM fa.main_copy WHERE farepair_status IN (2) ORDER BY faendorse_datetime DESC"
+                "SELECT * FROM fa.main WHERE farepair_status IN (2) ORDER BY faendorse_datetime DESC"
             )
             rows = cur.fetchall()
         conn.close()
@@ -678,7 +821,7 @@ def get_close_fa():
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT * FROM fa.main_copy WHERE farepair_status IN (4) ORDER BY faendorse_datetime DESC"
+                "SELECT * FROM fa.main WHERE farepair_status IN (4) ORDER BY faendorse_datetime DESC"
             )
             rows = cur.fetchall()
         conn.close()

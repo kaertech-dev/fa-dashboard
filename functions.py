@@ -1,14 +1,11 @@
 # functions.py
 import pymysql.cursors
-from db_config import DB_FA, DB_PROJECTS
+from db_config import DB_FA
 import bcrypt
 from datetime import datetime
 
 def get_fa_conn():
     return pymysql.connect(**DB_FA)
-
-def get_projects_conn():
-    return pymysql.connect(**DB_PROJECTS)
 
 def hash_badge(plain_badge: str) -> str:
     """
@@ -44,7 +41,7 @@ def authenticate(employee_num: str, badge_raw: str):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT employee_num, employee_name, badge, `group` AS user_group
+                SELECT employee_num, employee_name, badge, `group` AS user_group, dataeffective_datetime
                 FROM userv2
                 WHERE employee_num = %s
                 LIMIT 1
