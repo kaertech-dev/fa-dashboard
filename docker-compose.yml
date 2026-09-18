@@ -1,9 +1,13 @@
 services:
-  fa-fashboard:
+  fa-dashboard:
     build: .
     image: fa_traceability
     container_name: fa_traceability
     restart: always
+    ports:
+      - "5007:5007"
+    env_file:
+      - .env
     environment:
       - FLASK_ENV=production
     networks:

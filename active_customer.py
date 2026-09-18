@@ -13,6 +13,8 @@ _CACHE = {
     'tester_records': (None, 0),
     'process_records': (None, 0),
     'pe_users': (None, 0),
+    'table_columns': {},
+    'run_units': {},
 }
 _CACHE_TTL = 300  # seconds
 
@@ -113,6 +115,75 @@ class ActiveProjects:
         _CACHE['stations'][key] = (data, now)
         return data
 
+    def count_run_units(self, date_from, date_to, product=None, model=None, station=None):
+        """Count distinct scanned serials in the selected production tables."""
+        cache_key = (str(date_from), str(date_to), product, model, station)
+        cached = _CACHE['run_units'].get(cache_key)
+        now = time.time()
+        if cached and now - cached[1] < 15:
+            return cached[0]
+
+        total_run_units = 0
+        products = self.get_active_products()
+        if product:
+            products = [item for item in products if item['id'] == product]
+
+        table_specs = []
+        for product_item in products:
+            product_id = product_item['id']
+            models = self.get_models_by_product(product_id)
+            if model:
+                models = [item for item in models if item['id'] == model]
+            for model_item in models:
+                model_id = model_item['id']
+                stations = self.get_stations_by_model(product_id, model_id)
+                if station:
+                    stations = [item for item in stations if item['id'] == station]
+                for station_item in stations:
+                    table_specs.append((product_id, model_id, station_item['id']))
+
+        def count_table(spec):
+            product_id, model_id, station_id = spec
+            table = f"{model_id}_{station_id}"
+            metadata_key = (product_id, table)
+            columns = _CACHE['table_columns'].get(metadata_key)
+            if columns is None:
+                try:
+                    with projects_engine.connect() as conn:
+                        columns = [row[0] for row in conn.execute(
+                            text(f"SHOW COLUMNS FROM `{product_id}`.`{table}`")
+                        )]
+                    _CACHE['table_columns'][metadata_key] = columns
+                except Exception as e:
+                    print(f"[RunUnits] columns '{product_id}'.'{table}': {e}")
+                    return 0
+
+            serial_col = next((column for column in columns if column.lower() in StationLog._SERIAL_CANDIDATES), None)
+            date_col = next((column for column in columns if column.lower() in StationLog._DATETIME_CANDIDATES), None)
+            if not serial_col or not date_col:
+                return 0
+            try:
+                with projects_engine.connect() as conn:
+                    result = conn.execute(text(
+                        f"SELECT COUNT(DISTINCT `{serial_col}`) AS run_units "
+                        f"FROM `{product_id}`.`{table}` "
+                        f"WHERE `{date_col}` >= :date_from AND `{date_col}` < :date_to "
+                        f"AND `{serial_col}` IS NOT NULL AND `{serial_col}` <> ''"
+                    ), {"date_from": date_from, "date_to": date_to})
+                    row = result.first()
+                    return int(row[0] or 0) if row else 0
+            except Exception as e:
+                print(f"[RunUnits] query '{product_id}'.'{table}': {e}")
+                return 0
+
+        # Query one table at a time. The dashboard can have many station tables,
+        # and parallel connections exhaust the shared SQLAlchemy pool under Gunicorn.
+        for table_spec in table_specs:
+            total_run_units += count_table(table_spec)
+
+        _CACHE['run_units'][cache_key] = (total_run_units, now)
+        return total_run_units
+
 # ── StationLog ────────────────────────────────────────────────────────────────
 
 class StationLog:
@@ -132,6 +203,8 @@ class StationLog:
                              'failure_remarks', 'result_remarks', 'description', 'fail_reason', 'fail_reason', 'failure_reason']
     _DATETIME_CANDIDATES = ['datetime', 'test_datetime', 'log_datetime', 'created_at',
                              'timestamp', 'date_time', 'test_date', 'date']
+    
+    _PO_CANDIDATES        = ['po_num', 'po_number', 'ponum', 'po', 'purchase_order', 'purchase_order_num']
 
     def __init__(self, active_projects=None):
         self._active = active_projects or ActiveProjects()
@@ -159,11 +232,11 @@ class StationLog:
 
         serial_col = self._pick(columns, self._SERIAL_CANDIDATES)
         if not serial_col:
-            # This table doesn't look like it has a serial number column — skip it.
             return None
 
         remarks_col = self._pick(columns, self._REMARKS_CANDIDATES)
         dt_col      = self._pick(columns, self._DATETIME_CANDIDATES)
+        po_col      = self._pick(columns, self._PO_CANDIDATES)  # NEW
 
         order_col = dt_col or self._pick(columns, ['id'])
         order_sql = f"ORDER BY `{order_col}` DESC" if order_col else ""
@@ -189,6 +262,7 @@ class StationLog:
             "station":      station,
             "remarks":      (row.get(remarks_col) if remarks_col else None) or "",
             "log_datetime": str(row.get(dt_col)) if dt_col and row.get(dt_col) else None,
+            "po_num":       (row.get(po_col) if po_col else None) or "",  # NEW
         }
 
     def find_last_log(self, serial_num):
@@ -221,3 +295,39 @@ class StationLog:
 
         matches.sort(key=lambda m: m.get("log_datetime") or "", reverse=True)
         return matches[0]
+        
+    # NEW
+    def update_remarks(self, schemadb, model, station, serial_num, remarks):
+        """
+        Write remarks back into the production/test station table's remarks
+        column, for the same row find_last_log() would have matched.
+
+        Used when that table's remarks were blank at test time, and FA later
+        fills them in during endorsement — so the source-of-truth production
+        record gets the same description, not just fa.main.
+        """
+        table = f"{model}_{station}"
+        columns = self._columns(schemadb, table)
+        if not columns:
+            return False
+
+        serial_col  = self._pick(columns, self._SERIAL_CANDIDATES)
+        remarks_col = self._pick(columns, self._REMARKS_CANDIDATES)
+        dt_col      = self._pick(columns, self._DATETIME_CANDIDATES)
+        if not serial_col or not remarks_col:
+            return False
+
+        order_col = dt_col or self._pick(columns, ['id'])
+        order_sql = f"ORDER BY `{order_col}` DESC" if order_col else ""
+
+        try:
+            with projects_engine.connect() as conn:
+                result = conn.execute(text(
+                    f"UPDATE `{schemadb}`.`{table}` SET `{remarks_col}` = :remarks "
+                    f"WHERE `{serial_col}` = :serial {order_sql} LIMIT 1"
+                ), {"remarks": remarks, "serial": serial_num})
+                conn.commit()
+                return result.rowcount > 0
+        except Exception as e:
+            print(f"[StationLog] update_remarks '{schemadb}'.'{table}': {e}")
+            return False

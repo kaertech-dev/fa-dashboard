@@ -17,4 +17,4 @@ COPY . .
 
 EXPOSE 5007
 
-CMD ["python", "app.py"]
+CMD ["gunicorn", "--workers", "2", "--bind", "0.0.0.0:5007", "app:app"]

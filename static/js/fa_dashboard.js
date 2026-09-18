@@ -1,12 +1,21 @@
 // fa_dashboard.js
 // ── STATE ─────────────────────────────────────────────────────────────────────
 let allData = [], filteredData = [], page = 1;
+let dbHideDates = [];  // Hide dates from database (fa_analysis table)
+let settingsAccess = false;
+let runUnitsRequest = 0;
+let runUnitsController = null;
+let lastRunUnitsValue = null;
+let availableDashboardDates = [];
+let dataRequestId = 0;
 const PAGE_SIZE = 50;
 const COLORS = ['#f78166','#79c0ff','#56d364','#d29922','#bc8cff','#58a6ff','#ff7b72','#39d353','#ffa657','#a5d6ff'];
 
 function refreshSettingsDateFilters() {
   const baseRows = allData;
-  const availableDates = getAvailableDates(baseRows);
+  const availableDates = availableDashboardDates.length
+    ? availableDashboardDates
+    : getAvailableDates(baseRows);
   
   // Filter out weekends - only show weekdays
   const weekdayDates = availableDates.filter(date => !isWeekend(date));
@@ -87,10 +96,36 @@ function isLunchTime(datetimeStr) {
 }
 
 function getHolidaysAndMeetings() {
+  // Parse database hide dates into entries format
+  // dbHideDates is fetched from backend on dashboard load
+  const entries = [];
+  dbHideDates.forEach(item => {
+    try {
+      const dates = item.dates.split(',').map(d => d.trim());
+      dates.forEach(date => {
+        entries.push({
+          date,
+          reason: 'Holiday/Meeting',
+          authorizedPerson: item.authorized_person || '',
+          createdAt: new Date().toISOString()
+        });
+      });
+    } catch (e) {
+      // Skip malformed entries
+    }
+  });
+  return entries;
+}
+
+async function loadHideDatesFromDB() {
   try {
-    return JSON.parse(localStorage.getItem('fa_holidays_meetings') || '[]');
-  } catch {
-    return [];
+    const res = await fetch('/api/hide_dates');
+    const json = await res.json();
+    if (json.ok && json.hide_dates) {
+      dbHideDates = json.hide_dates;
+    }
+  } catch (e) {
+    console.error('Failed to load hide dates:', e);
   }
 }
 
@@ -105,10 +140,8 @@ function shouldHideRecord(record) {
   const isAdmin = (localStorage.getItem('fa_group') || '').toUpperCase() === 'ADMIN';
 
   const holidays = getHolidaysAndMeetings();
-  const userNum = String(localStorage.getItem('fa_user_num') || '').trim();
   const hasConfiguredHide = holidays.some(entry => {
-    const authorizedPerson = String(entry.authorizedPerson || '').trim();
-    return entry.date === dateStr && (!authorizedPerson || authorizedPerson === userNum);
+    return entry.date === dateStr;
   });
 
   // Explicit holiday/meeting assignments apply even when the viewer is an admin.
@@ -191,6 +224,7 @@ async function doLogin() {
       localStorage.setItem('fa_user_num', json.user.employee_num || '');
       localStorage.setItem('fa_group', group);
       applyGroupAccess(group);
+      await loadSettingsAccess();
       document.getElementById('login-screen').style.display  = 'none';
       document.getElementById('dashboard-screen').style.display = 'block';
       await loadAndRender();
@@ -225,6 +259,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (savedUser) {
     document.getElementById('user-label').textContent = savedUser;
     applyGroupAccess(savedGroup);
+    await loadSettingsAccess();
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('dashboard-screen').style.display = 'block';
 
@@ -263,54 +298,189 @@ document.getElementById('btn-settings-close-btn').addEventListener('click', () =
 const isAdminUser = () => (localStorage.getItem('fa_group') || '').toUpperCase() === 'ADMIN';
 
 function renderSettingsModal() {
+  const admin = isAdminUser();
   const settingsAuthField = document.getElementById('settings-auth-person-field');
-  settingsAuthField.style.display = isAdminUser() ? 'block' : 'none';
+  const userCreatePanel = document.getElementById('settings-user-create-panel');
+
+  settingsAuthField.style.display = admin ? 'block' : 'none';
+  if (userCreatePanel) userCreatePanel.style.display = admin ? 'block' : 'none';
+
+  if (admin) {
+    loadAuthorizedPersons();
+  }
+
   updateSettingsHiddenList();
+}
+
+async function loadAuthorizedPersons() {
+  try {
+    const res = await fetch('/api/authorized_persons');
+    const json = await res.json();
+    if (json.ok && json.persons) {
+      const select = document.getElementById('settings-auth-person-dropdown');
+      if (select) {
+        select.innerHTML = '<option value="">Self</option>';
+        json.persons.forEach(person => {
+          const opt = document.createElement('option');
+          opt.value = person.num;
+          opt.textContent = `${person.name} (${person.num})`;
+          select.appendChild(opt);
+        });
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load authorized persons:', e);
+  }
+}
+
+async function loadSettingsAccess() {
+  try {
+    const res = await fetch('/api/settings_access');
+    const json = await res.json();
+    settingsAccess = Boolean(json.ok && json.allowed);
+  } catch (e) {
+    settingsAccess = false;
+    console.error('Failed to check settings access:', e);
+  }
+  const settingsButton = document.getElementById('btn-settings');
+  if (settingsButton) settingsButton.style.display = settingsAccess ? '' : 'none';
 }
 
 function updateSettingsHiddenList() {
   const list = document.getElementById('settings-hidden-list');
   const holidays = getHolidaysAndMeetings();
-  const userNum = localStorage.getItem('fa_user_num') || '';
 
   if (!holidays.length) {
     list.innerHTML = '<div style="color:var(--muted)">No hidden dates yet</div>';
     return;
   }
 
-  const userHolidays = holidays.filter(h => !h.authorizedPerson || h.authorizedPerson === userNum || isAdminUser());
+  list.innerHTML = holidays.map((h, idx) => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
+      <span>${h.date} - ${h.reason || 'N/A'}${h.authorizedPerson ? ' (' + h.authorizedPerson + ')' : ''}</span>
+    </div>
+  `).join('');
+}
 
-  if (!userHolidays.length) {
-    list.innerHTML = '<div style="color:var(--muted)">No hidden dates</div>';
+async function saveHideDatesToDB(changedAuthorizedPerson = null) {
+  try {
+    const items = changedAuthorizedPerson
+      ? [dbHideDates.find(item => item.authorized_person === changedAuthorizedPerson) || {
+          dates: '',
+          authorized_person: changedAuthorizedPerson
+        }]
+      : dbHideDates;
+    for (const item of items) {
+      const authPerson = item.authorized_person || localStorage.getItem('fa_user_num');
+      const res = await fetch('/api/hide_dates_save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          hide_dates: item.dates,
+          authorized_person: authPerson
+        })
+      });
+
+      const json = await res.json();
+      if (!json.ok) {
+        console.error(`Failed to save hide dates for ${authPerson}:`, json.error);
+        return false;
+      }
+    }
+    return true;
+  } catch (e) {
+    console.error('Failed to save hide dates:', e);
+    return false;
+  }
+}
+
+document.getElementById('btn-settings-authorized-submit').addEventListener('click', async () => {
+  const err = document.getElementById('settings-error');
+  const select = document.getElementById('settings-auth-person-dropdown');
+  const authorizedPerson = select ? select.value.trim() : '';
+  err.textContent = '';
+  err.style.color = 'var(--danger)';
+
+  if (!authorizedPerson) {
+    err.textContent = 'Please select an authorized person.';
     return;
   }
 
-  list.innerHTML = userHolidays.map((h, idx) => `
-    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
-      <span>${h.date} - ${h.reason || 'N/A'}${h.authorizedPerson ? ' (' + h.authorizedPerson + ')' : ''}</span>
-      <button class="btn-reset" style="padding:2px 8px;font-size:.8rem" data-idx="${idx}">Remove</button>
-    </div>
-  `).join('');
-
-  list.querySelectorAll('button[data-idx]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const idx = parseInt(btn.dataset.idx);
-      holidays.splice(idx, 1);
-      localStorage.setItem('fa_holidays_meetings', JSON.stringify(holidays));
-      updateSettingsHiddenList();
-      applyFilters();
+  try {
+    const res = await fetch('/api/authorized_person_save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ authorized_person: authorizedPerson })
     });
-  });
-}
+    const json = await res.json();
+    if (!json.ok) {
+      err.textContent = json.error || 'Could not save authorized person.';
+      return;
+    }
+    err.style.color = 'var(--success)';
+    err.textContent = 'Authorized person saved.';
+    await loadHideDatesFromDB();
+    updateSettingsHiddenList();
+    loadSettingsAccess();
+  } catch (e) {
+    err.textContent = 'Could not save authorized person: ' + e.message;
+  }
+});
 
-document.getElementById('btn-settings-add').addEventListener('click', () => {
+document.getElementById('btn-create-user').addEventListener('click', async () => {
+  const err = document.getElementById('new-user-error');
+  err.textContent = '';
+
+  const employeeNum = document.getElementById('new-user-employee-num').value.trim();
+  const employeeName = document.getElementById('new-user-employee-name').value.trim();
+  const group = document.getElementById('new-user-group').value.trim();
+  const tempPassword = document.getElementById('new-user-password').value.trim();
+
+  if (!employeeNum || !employeeName || !tempPassword) {
+    err.textContent = 'Employee number, name, and a temporary password are required.';
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/create_user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        employee_num: employeeNum,
+        employee_name: employeeName,
+        group,
+        temp_password: tempPassword
+      })
+    });
+
+    const json = await res.json();
+    if (!json.ok) {
+      err.textContent = json.error || 'Could not create user.';
+      return;
+    }
+
+    document.getElementById('new-user-employee-num').value = '';
+    document.getElementById('new-user-employee-name').value = '';
+    document.getElementById('new-user-password').value = '';
+    document.getElementById('new-user-group').value = 'ADMIN';
+    err.textContent = 'User created successfully.';
+    err.style.color = 'var(--success)';
+    loadAuthorizedPersons();
+  } catch (e) {
+    err.style.color = 'var(--danger)';
+    err.textContent = 'Could not create user: ' + e.message;
+  }
+});
+
+document.getElementById('btn-settings-add').addEventListener('click', async () => {
   const err = document.getElementById('settings-error');
   err.textContent = '';
 
   const fromDate = document.getElementById('settings-date-from').value.trim();
   const toDate = document.getElementById('settings-date-to').value.trim();
   const reason = document.getElementById('settings-hide-reason').value.trim();
-  const authPerson = document.getElementById('settings-auth-person').value.trim();
+  const authPersonSelect = document.getElementById('settings-auth-person-dropdown');
+  const authPerson = authPersonSelect ? authPersonSelect.value.trim() : '';
 
   if (!fromDate || !toDate) { err.textContent = 'Please select both From and To dates.'; return; }
   if (fromDate > toDate) { err.textContent = 'Date From cannot be after Date To.'; return; }
@@ -319,34 +489,45 @@ document.getElementById('btn-settings-add').addEventListener('click', () => {
     return;
   }
 
-  const holidays = getHolidaysAndMeetings();
-  const userNum = localStorage.getItem('fa_user_num') || '';
   const start = new Date(`${fromDate}T00:00:00`);
   const end = new Date(`${toDate}T00:00:00`);
-  const authorizedPerson = isAdminUser() && authPerson ? authPerson : userNum;
-  let addedCount = 0;
+  const datesInRange = [];
 
   for (const current = new Date(start); current <= end; current.setDate(current.getDate() + 1)) {
     const dateStr = current.toISOString().slice(0, 10);
-    if (!isWeekend(dateStr) && !holidays.some(entry => entry.date === dateStr && entry.authorizedPerson === authorizedPerson)) {
-      holidays.push({
-      date: dateStr,
-      reason,
-      authorizedPerson,
-      createdBy: userNum,
-      createdAt: new Date().toISOString()
-      });
-      addedCount += 1;
+    if (!isWeekend(dateStr)) {
+      datesInRange.push(dateStr);
     }
   }
 
-  if (!addedCount) { err.textContent = 'No new weekdays in selected range.'; return; }
-  localStorage.setItem('fa_holidays_meetings', JSON.stringify(holidays));
+  if (!datesInRange.length) { err.textContent = 'No new weekdays in selected range.'; return; }
+
+  // Update dbHideDates with new dates
+  const authKey = authPerson || localStorage.getItem('fa_user_num');
+  const existingDates = dbHideDates
+    .filter(item => item.authorized_person === authKey)
+    .flatMap(item => String(item.dates || '').split(',').map(date => date.trim()))
+    .filter(Boolean);
+  dbHideDates = dbHideDates.filter(item => item.authorized_person !== authKey);
+  dbHideDates.push({
+    dates: [...new Set([...existingDates, ...datesInRange])].sort().join(','),
+    authorized_person: authKey
+  });
+
+  // Save to backend
+  const saved = await saveHideDatesToDB(authKey);
+  if (!saved) {
+    err.textContent = 'Could not save hide dates.';
+    return;
+  }
+  await loadHideDatesFromDB();
 
   document.getElementById('settings-date-from').value = '';
   document.getElementById('settings-date-to').value = '';
   document.getElementById('settings-hide-reason').value = '';
-  document.getElementById('settings-auth-person').value = '';
+  if (authPersonSelect) {
+    authPersonSelect.value = '';
+  }
 
   updateSettingsHiddenList();
   applyFilters();
@@ -412,12 +593,51 @@ document.getElementById('btn-chpass-submit').addEventListener('click', async () 
   }
 });
 
+// Computes the default date range on load: the 1st of the current calendar
+// month through today, clamped to whatever FA dates actually exist (via
+// availableDashboardDates, which is already filtered server-side by any
+// per-user dataeffective_datetime restriction).
+function getCurrentMonthDefaultRange() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const monthPrefix = `${year}-${month}`;
+
+  // availableDashboardDates is sorted newest-first (see getAvailableDates / data_dates).
+  const datesInMonth = availableDashboardDates.filter(d => d.startsWith(monthPrefix));
+
+  if (datesInMonth.length) {
+    return {
+      from: datesInMonth[datesInMonth.length - 1], // oldest date in this month
+      to: datesInMonth[0],                          // newest date in this month
+    };
+  }
+
+  // No FA records yet this month (e.g. brand-new month, or all filtered by
+  // dataeffective_datetime) — fall back to the previous single-most-recent-date behavior.
+  const fallback = availableDashboardDates[0] || '';
+  return { from: fallback, to: fallback };
+}
+
 // ── DATA ──────────────────────────────────────────────────────────────────────
 async function loadAndRender() {
   loader(true);
 
   try {
-    const res = await fetch('/api/data');
+    await loadHideDatesFromDB();
+
+    const datesRes = await fetch('/api/data_dates');
+    const datesJson = await datesRes.json();
+    if (!datesJson.ok) throw new Error(datesJson.error || 'Failed to load available dates.');
+    availableDashboardDates = Array.isArray(datesJson.dates) ? datesJson.dates : [];
+
+    const storedDates = getStoredDateRange();
+    const defaultRange = getCurrentMonthDefaultRange();
+    const selectedFrom = storedDates.from || defaultRange.from;
+    const selectedTo = storedDates.to || defaultRange.to;
+    document.getElementById('f-from').value = selectedFrom;
+    document.getElementById('f-to').value = selectedTo;
+    const res = await fetchDataForSelectedDates();
 
     if (!res.ok) {
       throw new Error(`Server returned HTTP ${res.status}`);
@@ -431,10 +651,10 @@ async function loadAndRender() {
 
     allData = Array.isArray(json.rows) ? json.rows : [];
 
-    // Always return to page 1 after loading new data
     page = 1;
 
     populateFilters();
+    restoreFilterState();
     applyFilters();
 
   } catch (e) {
@@ -445,6 +665,7 @@ async function loadAndRender() {
     loader(false);
   }
 }
+
 // ================refresh web page=============
 let refreshTimer = null;
 let isRefreshing = false;
@@ -456,9 +677,7 @@ async function refreshData() {
   isRefreshing = true;
 
   try {
-    const res = await fetch('/api/data', {
-      cache: 'no-store'
-    });
+    const res = await fetchDataForSelectedDates();
 
     if (!res.ok) {
       throw new Error(`Server returned HTTP ${res.status}`);
@@ -486,6 +705,52 @@ async function refreshData() {
   }
 }
 
+function getStoredDateRange() {
+  try {
+    const state = JSON.parse(localStorage.getItem(getFilterStorageKey()) || '{}');
+    return { from: state['f-from'] || '', to: state['f-to'] || '' };
+  } catch (e) {
+    return { from: '', to: '' };
+  }
+}
+
+async function fetchDataForSelectedDates() {
+  const from = document.getElementById('f-from').value;
+  const to = document.getElementById('f-to').value;
+  const requestId = ++dataRequestId;
+  if (!from || !to) {
+    return { ok: true, json: async () => ({ ok: true, rows: [] }) };
+  }
+
+  const res = await fetch(
+    `/api/data?date_from=${encodeURIComponent(from)}&date_to=${encodeURIComponent(to)}`,
+    { cache: 'no-store' }
+  );
+  if (requestId !== dataRequestId) {
+    return { ok: true, json: async () => ({ ok: true, rows: [] }) };
+  }
+  return res;
+}
+
+async function reloadForDateSelection() {
+  try {
+    loader(true);
+    const res = await fetchDataForSelectedDates();
+    if (!res.ok) throw new Error(`Server returned HTTP ${res.status}`);
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error || 'Failed to load selected dates.');
+    allData = Array.isArray(json.rows) ? json.rows : [];
+    page = 1;
+    refreshCascadingFilters();
+    saveFilterState();
+    applyFilters();
+  } catch (e) {
+    console.error('[FA Dashboard] Selected-date load failed:', e);
+  } finally {
+    loader(false);
+  }
+}
+
 function startAutoRefresh() {
   if (refreshTimer) {
     clearInterval(refreshTimer);
@@ -495,6 +760,42 @@ function startAutoRefresh() {
 }
 
 // ── FILTERS ───────────────────────────────────────────────────────────────────
+function getFilterStorageKey() {
+  const userNum = localStorage.getItem('fa_user_num') || 'guest';
+  return `fa_dashboard_filters_${userNum}`;
+}
+
+function saveFilterState() {
+  const state = {};
+  ['f-product', 'f-model', 'f-station', 'f-status', 'f-from', 'f-to'].forEach(id => {
+    state[id] = document.getElementById(id).value;
+  });
+  localStorage.setItem(getFilterStorageKey(), JSON.stringify(state));
+}
+
+function restoreFilterState() {
+  let state;
+  try {
+    state = JSON.parse(localStorage.getItem(getFilterStorageKey()) || '{}');
+  } catch (e) {
+    state = {};
+  }
+
+  const product = state['f-product'] || '';
+  const model = state['f-model'] || '';
+  const station = state['f-station'] || '';
+  document.getElementById('f-product').value = product;
+  refreshCascadingFilters();
+  document.getElementById('f-model').value = model;
+  refreshCascadingFilters();
+  document.getElementById('f-station').value = station;
+  document.getElementById('f-status').value = state['f-status'] || '';
+  refreshCascadingFilters();
+  document.getElementById('f-from').value = state['f-from'] || '';
+  document.getElementById('f-to').value = state['f-to'] || '';
+  refreshCascadingFilters();
+}
+
 function populateFilters() {
   refreshCascadingFilters();
 }
@@ -523,7 +824,9 @@ function refreshDateFilters(baseRows = allData) {
   const currentFrom = fromSelect.value;
   const currentTo = toSelect.value;
 
-  const availableDates = getAvailableDates(baseRows);
+  const availableDates = availableDashboardDates.length
+    ? availableDashboardDates
+    : getAvailableDates(baseRows);
 
   const validFrom = currentFrom && availableDates.includes(currentFrom)
     ? currentFrom
@@ -579,13 +882,16 @@ document.getElementById('f-product').addEventListener('change', () => {
   document.getElementById('f-model').value = '';
   document.getElementById('f-station').value = '';
   refreshCascadingFilters();
+  saveFilterState();
 });
 document.getElementById('f-model').addEventListener('change', () => {
   document.getElementById('f-station').value = '';
   refreshCascadingFilters();
+  saveFilterState();
 });
 document.getElementById('f-station').addEventListener('change', () => {
   refreshCascadingFilters();
+  saveFilterState();
 });
 document.getElementById('f-from').addEventListener('change', () => {
   const fromValue = document.getElementById('f-from').value;
@@ -596,6 +902,8 @@ document.getElementById('f-from').addEventListener('change', () => {
   }
 
   refreshCascadingFilters();
+  saveFilterState();
+  reloadForDateSelection();
 });
 document.getElementById('f-to').addEventListener('change', () => {
   const fromValue = document.getElementById('f-from').value;
@@ -606,14 +914,34 @@ document.getElementById('f-to').addEventListener('change', () => {
   }
 
   refreshCascadingFilters();
+  saveFilterState();
+  reloadForDateSelection();
 });
 
-document.getElementById('btn-apply').addEventListener('click',  () => { page=1; applyFilters(); });
+document.getElementById('btn-apply').addEventListener('click',  () => { page=1; saveFilterState(); applyFilters(); });
+document.getElementById('btn-today').addEventListener('click', () => {
+  const now = new Date();
+  const today = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-');
+
+  // Today may have production scans but no FA records yet. Keep it as a
+  // selectable date so the Run Units KPI can still query production data.
+  if (!availableDashboardDates.includes(today)) {
+    availableDashboardDates = [today, ...availableDashboardDates].sort((a, b) => b.localeCompare(a));
+  }
+
+  document.getElementById('f-from').value = today;
+  document.getElementById('f-to').value = today;
+  refreshCascadingFilters();
+  saveFilterState();
+  page = 1;
+  reloadForDateSelection();
+});
 document.getElementById('btn-reset').addEventListener('click',  () => {
   ['f-product','f-model','f-station','f-status'].forEach(id => document.getElementById(id).value='');
   document.getElementById('f-from').value = '';
   document.getElementById('f-to').value   = '';
   refreshCascadingFilters();
+  localStorage.removeItem(getFilterStorageKey());
   page=1; applyFilters();
 });
 
@@ -656,6 +984,20 @@ function applyFilters() {
   });
   
   renderKPIs(); renderCharts(); renderTable();
+  updateRunUnitsKpi();
+}
+
+function getRowsForCurrentSelection() {
+  const product = document.getElementById('f-product').value;
+  const model = document.getElementById('f-model').value;
+  const station = document.getElementById('f-station').value;
+
+  return allData.filter(record => {
+    if (product && record.product !== product) return false;
+    if (model && record.model !== model) return false;
+    if (station && record.station !== station) return false;
+    return true;
+  });
 }
 
 // ── KPIs ──────────────────────────────────────────────────────────────────────
@@ -665,6 +1007,48 @@ function renderKPIs() {
   document.getElementById('kpi-wip').textContent      = filteredData.filter(r=>r.farepair_status==2).length.toLocaleString();
   document.getElementById('kpi-closed').textContent   = filteredData.filter(r=>r.farepair_status==4).length.toLocaleString();
   document.getElementById('kpi-products').textContent = new Set(filteredData.map(r=>r.product).filter(Boolean)).size;
+  if (lastRunUnitsValue === null) {
+    document.getElementById('kpi-run-units').textContent = '–';
+  }
+}
+
+async function updateRunUnitsKpi() {
+  const requestId = ++runUnitsRequest;
+  const from = document.getElementById('f-from').value;
+  const to = document.getElementById('f-to').value;
+  if (!from && !to) {
+    lastRunUnitsValue = null;
+    document.getElementById('kpi-run-units').textContent = '–';
+    return;
+  }
+  const params = new URLSearchParams({
+    date_from: from || to,
+    date_to: to || from,
+    product: document.getElementById('f-product').value,
+    model: document.getElementById('f-model').value,
+    station: document.getElementById('f-station').value
+  });
+
+  if (runUnitsController) runUnitsController.abort();
+  runUnitsController = new AbortController();
+  try {
+    const res = await fetch(`/api/run_units?${params.toString()}`, {
+      signal: runUnitsController.signal
+    });
+    const json = await res.json();
+    if (requestId === runUnitsRequest) {
+      if (json.ok && json.run_units !== null && json.run_units !== undefined) {
+        lastRunUnitsValue = Number(json.run_units);
+        document.getElementById('kpi-run-units').textContent = lastRunUnitsValue.toLocaleString();
+      }
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    if (requestId === runUnitsRequest && lastRunUnitsValue === null) {
+      document.getElementById('kpi-run-units').textContent = '–';
+    }
+    console.error('[FA Dashboard] Run-unit count failed:', e);
+  }
 }
 // ── KPI CARD CLICK-TO-FILTER ───────────────────────────────────────────────
 document.querySelectorAll('.kpi-clickable').forEach(card => {
@@ -974,8 +1358,49 @@ function renderCharts() {
   );
 
   drawHBarChart('chart-defect-cat', countBy(filteredData, 'defect_cat'));
+  renderFaMeantime();
 
   renderPareto();
+}
+
+function parseFaDateTime(value) {
+  if (!value) return null;
+  const parsed = new Date(String(value).replace(' ', 'T'));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+const FA_CLASS_MULTIPLIERS = { 1: 1, 2: 0.75, 3: 0.5, 4: 0.25 };
+function renderFaMeantime() {
+  const valueEl = document.getElementById('fa-meantime-value');
+  const subEl = document.getElementById('fa-meantime-sub');
+  if (!valueEl || !subEl) return;
+
+  const durations = filteredData
+    .map(record => {
+      const endorsed = parseFaDateTime(record.faendorse_datetime);
+      const completed = parseFaDateTime(record.faended_datetime);
+      if (!endorsed || !completed || completed < endorsed) return null;
+
+      const multiplier = FA_CLASS_MULTIPLIERS[Number(record.fa_class)];
+      if (!multiplier) return null; // skip records with no/invalid fa_class (not 1–4)
+
+      const rawMinutes = (completed.getTime() - endorsed.getTime()) / 60000;
+      return rawMinutes * multiplier;
+    })
+    .filter(duration => duration !== null);
+
+  if (!durations.length) {
+    valueEl.textContent = '–';
+    subEl.textContent = 'No completed FA records in the selected data';
+    return;
+  }
+
+  const averageMinutes = durations.reduce((sum, duration) => sum + duration, 0) / durations.length;
+  valueEl.textContent = `${averageMinutes.toLocaleString(undefined, {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1
+  })} min`;
+  subEl.textContent = `Average endorsement-to-completion time (weighted by FA class) · ${durations.length.toLocaleString()} completed FA records`;
 }
 
 function groupByFaCase() {
@@ -1006,12 +1431,12 @@ function faCaseLink(records) {
   return `<a class="pareto-case-link" href="${escapeHtml(value)}" target="_blank" rel="noopener noreferrer">See Documents</a>`;
 }
 
-function drawParetoTrend(records) {
+function drawParetoTrend(topGroups) {
   const canvas = document.getElementById('chart-pareto-trend');
   if (!canvas) return;
   const dpr = window.devicePixelRatio || 1;
   const W = Math.max(280, canvas.parentElement.clientWidth - 4);
-  const H = 180;
+  const H = 220; // taller than before to fit the legend
   canvas.width = W * dpr;
   canvas.height = H * dpr;
   canvas.style.width = W + 'px';
@@ -1019,16 +1444,25 @@ function drawParetoTrend(records) {
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
 
-  const monthGroups = new Map();
-  records.forEach(record => {
-    const month = String(record.faendorse_datetime || '').slice(0, 7);
-    const serial = String(record.serial_num || '');
-    if (!/^\d{4}-\d{2}$/.test(month) || !serial) return;
-    if (!monthGroups.has(month)) monthGroups.set(month, new Set());
-    monthGroups.get(month).add(serial);
+  const cases = topGroups.map(([faCase]) => faCase);
+
+  // Unique units affected per month, per FA case
+  const perCaseMonthly = topGroups.map(([, records]) => {
+    const monthMap = new Map();
+    records.forEach(record => {
+      const month = String(record.faendorse_datetime || '').slice(0, 7);
+      const serial = String(record.serial_num || '');
+      if (!/^\d{4}-\d{2}$/.test(month) || !serial) return;
+      if (!monthMap.has(month)) monthMap.set(month, new Set());
+      monthMap.get(month).add(serial);
+    });
+    return monthMap;
   });
-  const entries = [...monthGroups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  if (!entries.length) {
+
+  const allMonths = [...new Set(perCaseMonthly.flatMap(m => [...m.keys()]))]
+    .sort((a, b) => a.localeCompare(b));
+
+  if (!allMonths.length) {
     ctx.fillStyle = '#6b7280';
     ctx.font = '13px Segoe UI, sans-serif';
     ctx.textAlign = 'center';
@@ -1036,17 +1470,26 @@ function drawParetoTrend(records) {
     return;
   }
 
-  const values = entries.map(([, serials]) => serials.size);
-  const pad = { top: 18, right: 18, bottom: 42, left: 38 };
+  const values = perCaseMonthly.map(monthMap =>
+    allMonths.map(month => (monthMap.get(month) || new Set()).size)
+  );
+  const maxValue = Math.max(1, ...values.flat());
+
+  const pad = { top: 34, right: 18, bottom: 42, left: 38 };
   const chartW = W - pad.left - pad.right;
   const chartH = H - pad.top - pad.bottom;
-  const maxValue = Math.max(...values, 1);
-  const step = chartW / entries.length;
-  const barW = Math.max(12, Math.min(56, step * .62));
 
-  for (let tick = 0; tick <= 4; tick++) {
-    const value = Math.round(maxValue * tick / 4);
-    const y = pad.top + chartH - chartH * tick / 4;
+  const groupCount = allMonths.length;
+  const seriesCount = topGroups.length;
+  const groupStep = chartW / groupCount;
+  const barGap = 2;
+  const barW = Math.max(4, Math.min(22, (groupStep - barGap * (seriesCount + 1)) / seriesCount));
+
+  // Y grid + labels
+  const steps = 4;
+  for (let tick = 0; tick <= steps; tick++) {
+    const value = Math.round(maxValue * tick / steps);
+    const y = pad.top + chartH - chartH * tick / steps;
     ctx.strokeStyle = '#e5e7eb';
     ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
     ctx.fillStyle = '#6b7280';
@@ -1055,23 +1498,57 @@ function drawParetoTrend(records) {
     ctx.fillText(value, pad.left - 6, y + 4);
   }
 
-  entries.forEach(([month, serials], index) => {
-    const value = serials.size;
-    const height = chartH * value / maxValue;
-    const x = pad.left + step * index + (step - barW) / 2;
-    const y = pad.top + chartH - height;
-    ctx.fillStyle = '#f78166';
-    ctx.fillRect(x, y, barW, height);
-    ctx.fillStyle = '#111827';
-    ctx.font = 'bold 11px Segoe UI, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(value, x + barW / 2, y - 5);
+  // Grouped bars per month
+  allMonths.forEach((month, monthIndex) => {
+    const groupX = pad.left + groupStep * monthIndex;
+    const groupContentW = barW * seriesCount + barGap * (seriesCount - 1);
+    const groupStartX = groupX + (groupStep - groupContentW) / 2;
+
+    values.forEach((caseValues, caseIndex) => {
+      const value = caseValues[monthIndex];
+      const height = chartH * value / maxValue;
+      const x = groupStartX + caseIndex * (barW + barGap);
+      const y = pad.top + chartH - height;
+
+      ctx.fillStyle = COLORS[caseIndex % COLORS.length];
+      ctx.fillRect(x, y, barW, height);
+
+      if (value > 0) {
+        ctx.fillStyle = '#111827';
+        ctx.font = 'bold 9px Segoe UI, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(value, x + barW / 2, y - 3);
+      }
+    });
+
     ctx.fillStyle = '#6b7280';
     ctx.font = '10px Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
     const [year, monthNumber] = month.split('-');
     const label = new Date(Number(year), Number(monthNumber) - 1, 1)
       .toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
-    ctx.fillText(label, x + barW / 2, H - 16);
+    ctx.fillText(label, groupX + groupStep / 2, H - 16);
+  });
+
+  // Legend
+  let legendX = pad.left;
+  const legendY = 12;
+  ctx.font = '10px Segoe UI, sans-serif';
+  cases.forEach((faCase, index) => {
+    const color = COLORS[index % COLORS.length];
+    const label = faCase.length > 14 ? faCase.slice(0, 13) + '…' : faCase;
+    const textWidth = ctx.measureText(label).width;
+    const swatchSize = 9;
+    const itemWidth = swatchSize + 4 + textWidth + 14;
+    if (legendX + itemWidth > W - pad.right) return;
+
+    ctx.fillStyle = color;
+    ctx.fillRect(legendX, legendY - swatchSize + 2, swatchSize, swatchSize);
+    ctx.fillStyle = '#374151';
+    ctx.textAlign = 'left';
+    ctx.fillText(label, legendX + swatchSize + 4, legendY + 2);
+
+    legendX += itemWidth;
   });
 }
 
@@ -1099,7 +1576,7 @@ function renderPareto() {
       <div><span>Defect Category</span><strong>${fmt(top.defect_cat)}</strong></div>
       <div><span>Units Affected</span><strong>${unitsAffected(topRecords)}</strong></div>
     </div>`;
-  drawParetoTrend(topRecords);
+  drawParetoTrend(groups.slice(0, 5));
 
   listEl.innerHTML = groups.slice(0, 5).map(([faCase, records], index) => `
     <div class="pareto-case-row" data-fa-case="${escapeHtml(faCase)}">
