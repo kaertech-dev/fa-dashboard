@@ -178,6 +178,30 @@ def endorsement_stations():
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
+@app.route("/api/endorsement/update_remarks", methods=["POST"])
+@require_group("FA")
+def endorsement_update_remarks():
+    """
+    Best-effort writeback: only called when the scanned unit's production
+    station-log row had no remarks, so what the user types into Failure
+    Mode here also becomes that row's remarks — not just test_failure in fa.main.
+    """
+    data = request.get_json(silent=True) or {}
+    product    = data.get("product", "").strip()
+    model      = data.get("model", "").strip()
+    station    = data.get("station", "").strip()
+    serial_num = data.get("serial_num", "").strip()
+    remarks    = data.get("remarks", "").strip()
+
+    if not (product and model and station and serial_num):
+        return jsonify({"ok": False, "error": "Missing product/model/station/serial_num."})
+
+    try:
+        updated = station_log.update_remarks(product, model, station, serial_num, remarks)
+        return jsonify({"ok": True, "updated": updated})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB error: {e}"})
+        
 @app.route("/api/endorsement/update", methods=["POST"])
 @require_group("FA")
 def update_endorsement_route():

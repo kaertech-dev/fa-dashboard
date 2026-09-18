@@ -203,6 +203,8 @@ class StationLog:
                              'failure_remarks', 'result_remarks', 'description', 'fail_reason', 'fail_reason', 'failure_reason']
     _DATETIME_CANDIDATES = ['datetime', 'test_datetime', 'log_datetime', 'created_at',
                              'timestamp', 'date_time', 'test_date', 'date']
+    
+    _PO_CANDIDATES        = ['po_num', 'po_number', 'ponum', 'po', 'purchase_order', 'purchase_order_num']
 
     def __init__(self, active_projects=None):
         self._active = active_projects or ActiveProjects()
@@ -230,11 +232,11 @@ class StationLog:
 
         serial_col = self._pick(columns, self._SERIAL_CANDIDATES)
         if not serial_col:
-            # This table doesn't look like it has a serial number column — skip it.
             return None
 
         remarks_col = self._pick(columns, self._REMARKS_CANDIDATES)
         dt_col      = self._pick(columns, self._DATETIME_CANDIDATES)
+        po_col      = self._pick(columns, self._PO_CANDIDATES)  # NEW
 
         order_col = dt_col or self._pick(columns, ['id'])
         order_sql = f"ORDER BY `{order_col}` DESC" if order_col else ""
@@ -260,6 +262,7 @@ class StationLog:
             "station":      station,
             "remarks":      (row.get(remarks_col) if remarks_col else None) or "",
             "log_datetime": str(row.get(dt_col)) if dt_col and row.get(dt_col) else None,
+            "po_num":       (row.get(po_col) if po_col else None) or "",  # NEW
         }
 
     def find_last_log(self, serial_num):
@@ -292,3 +295,39 @@ class StationLog:
 
         matches.sort(key=lambda m: m.get("log_datetime") or "", reverse=True)
         return matches[0]
+        
+    # NEW
+    def update_remarks(self, schemadb, model, station, serial_num, remarks):
+        """
+        Write remarks back into the production/test station table's remarks
+        column, for the same row find_last_log() would have matched.
+
+        Used when that table's remarks were blank at test time, and FA later
+        fills them in during endorsement — so the source-of-truth production
+        record gets the same description, not just fa.main.
+        """
+        table = f"{model}_{station}"
+        columns = self._columns(schemadb, table)
+        if not columns:
+            return False
+
+        serial_col  = self._pick(columns, self._SERIAL_CANDIDATES)
+        remarks_col = self._pick(columns, self._REMARKS_CANDIDATES)
+        dt_col      = self._pick(columns, self._DATETIME_CANDIDATES)
+        if not serial_col or not remarks_col:
+            return False
+
+        order_col = dt_col or self._pick(columns, ['id'])
+        order_sql = f"ORDER BY `{order_col}` DESC" if order_col else ""
+
+        try:
+            with projects_engine.connect() as conn:
+                result = conn.execute(text(
+                    f"UPDATE `{schemadb}`.`{table}` SET `{remarks_col}` = :remarks "
+                    f"WHERE `{serial_col}` = :serial {order_sql} LIMIT 1"
+                ), {"remarks": remarks, "serial": serial_num})
+                conn.commit()
+                return result.rowcount > 0
+        except Exception as e:
+            print(f"[StationLog] update_remarks '{schemadb}'.'{table}': {e}")
+            return False

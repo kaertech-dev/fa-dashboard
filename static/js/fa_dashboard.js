@@ -593,12 +593,37 @@ document.getElementById('btn-chpass-submit').addEventListener('click', async () 
   }
 });
 
+// Computes the default date range on load: the 1st of the current calendar
+// month through today, clamped to whatever FA dates actually exist (via
+// availableDashboardDates, which is already filtered server-side by any
+// per-user dataeffective_datetime restriction).
+function getCurrentMonthDefaultRange() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const monthPrefix = `${year}-${month}`;
+
+  // availableDashboardDates is sorted newest-first (see getAvailableDates / data_dates).
+  const datesInMonth = availableDashboardDates.filter(d => d.startsWith(monthPrefix));
+
+  if (datesInMonth.length) {
+    return {
+      from: datesInMonth[datesInMonth.length - 1], // oldest date in this month
+      to: datesInMonth[0],                          // newest date in this month
+    };
+  }
+
+  // No FA records yet this month (e.g. brand-new month, or all filtered by
+  // dataeffective_datetime) — fall back to the previous single-most-recent-date behavior.
+  const fallback = availableDashboardDates[0] || '';
+  return { from: fallback, to: fallback };
+}
+
 // ── DATA ──────────────────────────────────────────────────────────────────────
 async function loadAndRender() {
   loader(true);
 
   try {
-    // Load hide dates from database before fetching main data
     await loadHideDatesFromDB();
 
     const datesRes = await fetch('/api/data_dates');
@@ -607,8 +632,9 @@ async function loadAndRender() {
     availableDashboardDates = Array.isArray(datesJson.dates) ? datesJson.dates : [];
 
     const storedDates = getStoredDateRange();
-    const selectedFrom = storedDates.from || availableDashboardDates[0] || '';
-    const selectedTo = storedDates.to || selectedFrom;
+    const defaultRange = getCurrentMonthDefaultRange();
+    const selectedFrom = storedDates.from || defaultRange.from;
+    const selectedTo = storedDates.to || defaultRange.to;
     document.getElementById('f-from').value = selectedFrom;
     document.getElementById('f-to').value = selectedTo;
     const res = await fetchDataForSelectedDates();
@@ -625,7 +651,6 @@ async function loadAndRender() {
 
     allData = Array.isArray(json.rows) ? json.rows : [];
 
-    // Always return to page 1 after loading new data
     page = 1;
 
     populateFilters();
@@ -640,6 +665,7 @@ async function loadAndRender() {
     loader(false);
   }
 }
+
 // ================refresh web page=============
 let refreshTimer = null;
 let isRefreshing = false;

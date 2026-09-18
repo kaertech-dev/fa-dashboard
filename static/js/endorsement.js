@@ -21,10 +21,17 @@ document.getElementById('btn-endorsement').addEventListener('click', openEndorse
 document.getElementById('btn-endorsement-close').addEventListener('click', closeEndorsementModal);
 document.getElementById('btn-endorsement-exit').addEventListener('click', closeEndorsementModal);
 
+let endorsementRemarksNeedsWriteback = false;
+
 function closeEndorsementModal() {
   document.getElementById('modal-endorsement').style.display = 'none';
 }
 
+// FA-group users can freely edit Station even outside offline mode.
+function isEndorsementStationEditable() {
+  const group = (localStorage.getItem('fa_group') || '').toUpperCase();
+  return group === 'FA' || group === 'ADMIN';
+}
 function resetEndorsementForm() {
   document.getElementById('endorsement-error').textContent = '';
   document.getElementById('endorsement-serial').value = '';
@@ -32,15 +39,15 @@ function resetEndorsementForm() {
   document.getElementById('endorsement-station-list').innerHTML = '';
   document.getElementById('endorsement-failure-mode').value = '';
   document.getElementById('endorsement-po').value = '';
-  // document.getElementById('endorsement-status').value = '';
   document.getElementById('endorsement-text-display').textContent =
     'Please enter the employee number of the endorser.';
+
+  endorsementRemarksNeedsWriteback = false;
 
   const endorserInput = document.getElementById('endorsement-endorser');
   endorserInput.value = localStorage.getItem('fa_user_num') || '';
   endorserInput.readOnly = true;
 
-  // Reset to read-only mode (normal)
   setEndorsementOfflineMode(false);
   resetEndorsementSelect('endorsement-product', 'Auto Shown Product', true);
   resetEndorsementSelect('endorsement-model', 'Auto shown model…', true);
@@ -76,7 +83,8 @@ function setEndorsementOfflineMode(isOffline) {
     modelInput.style.display = 'none';
     modelInput.value = '';
     
-    stationInput.readOnly = true;
+    // Station stays editable for FA-group users even in normal (online) mode.
+    stationInput.readOnly = !isEndorsementStationEditable();
   }
 }
 
@@ -220,11 +228,10 @@ async function scanEndorsementSerial() {
     }
 
     if (json.found) {
-      // Already in FA — show existing record, prefill for reference/re-endorse.
       const r = json.row;
       document.getElementById('endorsement-po').value = r.po_num || '';
-      // document.getElementById('endorsement-failure-mode').value = r.test_failure || '';
       document.getElementById('endorsement-station').value = r.station || '';
+      endorsementRemarksNeedsWriteback = false; // already in FA — not the fresh-scan path
 
       if (r.product) {
         ensureEndorsementOption('endorsement-product', r.product);
@@ -236,6 +243,14 @@ async function scanEndorsementSerial() {
           await loadEndorsementStationSuggestions(r.product, r.model);
         }
       }
+      const log = logJson.log;
+      document.getElementById('endorsement-station').value = log.station || '';
+      document.getElementById('endorsement-failure-mode').value = log.remarks || '';
+      document.getElementById('endorsement-po').value = log.po_num || '';
+
+      // No remarks on the production/test row — whatever the user types
+      // into Failure Mode here will be written back into that row too.
+      endorsementRemarksNeedsWriteback = !log.remarks;
 
       document.getElementById('endorsement-text-display').textContent =
 `SERIAL ALREADY REGISTERED:
@@ -252,8 +267,6 @@ You can review/update the details (Station is editable) and endorse again.`;
       return;
     }
 
-    // Not yet in FA — autosearch the production/test station logs for its
-    // last entry, to auto-fill Product/Model/Station + remarks.
     document.getElementById('endorsement-text-display').textContent = 'Searching station logs…';
 
     const logRes  = await fetch('/api/endorsement/station_log/' + encodeURIComponent(serial));
@@ -267,10 +280,14 @@ You can review/update the details (Station is editable) and endorse again.`;
     }
 
     if (logJson.found) {
-      // Station log found — prefill the data
       const log = logJson.log;
       document.getElementById('endorsement-station').value = log.station || '';
       document.getElementById('endorsement-failure-mode').value = log.remarks || '';
+      document.getElementById('endorsement-po').value = log.po_num || '';
+
+      // No remarks on the production/test row — whatever the user types
+      // into Failure Mode here will be written back into that row too.
+      endorsementRemarksNeedsWriteback = !log.remarks;
 
       if (log.product) {
         ensureEndorsementOption('endorsement-product', log.product);
@@ -289,6 +306,7 @@ You can review/update the details (Station is editable) and endorse again.`;
 Product: ${log.product || '–'}
 Model: ${log.model || '–'}
 Station: ${log.station || '–'}
+PO: ${log.po_num || '–'}
 Log Date & Time: ${formatEndorsementDate(log.log_datetime)}
 Remarks: ${log.remarks || '–'}
 
@@ -296,19 +314,18 @@ The details are auto-filled. You can review and press "Endorse to FA".`;
       return;
     }
 
-    // Not found in station logs either — OFFLINE mode: enable manual input
     setEndorsementOfflineMode(true);
     document.getElementById('endorsement-product').value = '';
     document.getElementById('endorsement-model').value = '';
     document.getElementById('endorsement-station').value = '';
     document.getElementById('endorsement-failure-mode').value = '';
+    endorsementRemarksNeedsWriteback = false; // no source table to write back to
 
   } catch (e) {
     err.textContent = 'Could not reach server: ' + e.message;
   }
 }
 
-// ── ENDORSER "Change" toggle ─────────────────────────────────────────────────
 document.getElementById('btn-endorsement-endorser-change').addEventListener('click', () => {
   const inp = document.getElementById('endorsement-endorser');
   inp.readOnly = !inp.readOnly;
@@ -321,17 +338,12 @@ document.getElementById('btn-endorsement-submit').addEventListener('click', asyn
   err.textContent = '';
 
   const serial   = document.getElementById('endorsement-serial').value.trim();
-  
-  // Get product from either select (normal) or text input (offline)
   const productSelect = document.getElementById('endorsement-product');
   const productInput = document.getElementById('endorsement-product-input');
   const product = productSelect.style.display !== 'none' ? productSelect.value : productInput.value.trim();
-  
-  // Get model from either select (normal) or text input (offline)
   const modelSelect = document.getElementById('endorsement-model');
   const modelInput = document.getElementById('endorsement-model-input');
   const model = modelSelect.style.display !== 'none' ? modelSelect.value : modelInput.value.trim();
-  
   const station  = document.getElementById('endorsement-station').value.trim();
   const endorser = document.getElementById('endorsement-endorser').value.trim();
   const failMode = document.getElementById('endorsement-failure-mode').value.trim();
@@ -351,7 +363,6 @@ document.getElementById('btn-endorsement-submit').addEventListener('click', asyn
     po_num:        document.getElementById('endorsement-po').value.trim(),
     test_failure:  failMode,
     prod_endorser: endorser,
-    // status:        document.getElementById('endorsement-status').value.trim() || null,
   };
 
   const res  = await fetch('/api/endorsement/update', {
@@ -360,9 +371,34 @@ document.getElementById('btn-endorsement-submit').addEventListener('click', asyn
     body: JSON.stringify(payload)
   });
   const json = await res.json();
+
   if (json.ok) {
-    closeEndorsementModal();
+    if (endorsementRemarksNeedsWriteback) {
+      // Best-effort: the FA record was already saved successfully above,
+      // so a failure here shouldn't block or roll back that success.
+      try {
+        const remarksRes  = await fetch('/api/endorsement/update_remarks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ product, model, station, serial_num: serial, remarks: failMode })
+        });
+        const remarksJson = await remarksRes.json();
+        if (!remarksJson.ok) {
+          console.error('[Endorsement] remarks writeback failed:', remarksJson.error);
+        }
+      } catch (e) {
+        console.error('[Endorsement] remarks writeback request failed:', e);
+      }
+    }
+
     if (typeof loadAndRender === 'function') loadAndRender(); // refresh table/charts
+
+    // Modal intentionally stays open — the operator can scan straight into
+    // the next unit. Only ✕ / Exit close it now.
+    resetEndorsementForm();
+    document.getElementById('endorsement-text-display').textContent =
+      `✓ Serial ${serial} endorsed to FA successfully.\n\nScan the next serial number, or click ✕ / Exit to close this window.`;
+    document.getElementById('endorsement-serial').focus();
   } else {
     err.textContent = json.error || 'Failed to endorse to FA.';
   }
