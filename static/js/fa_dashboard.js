@@ -239,8 +239,19 @@ async function doLogin() {
 }
 
 // ── LOGOUT ────────────────────────────────────────────────────────────────────
-document.getElementById('btn-logout').addEventListener('click', () => {
+document.getElementById('btn-logout').addEventListener('click', async () => {
+  let logoutError = null;
+  try {
+    const response = await fetch('/api/logout', { method: 'POST' });
+    if (!response.ok) throw new Error(`Server returned HTTP ${response.status}`);
+  } catch (error) {
+    logoutError = error;
+    console.error('[FA Dashboard] Server logout failed:', error);
+  }
+
   allData = []; filteredData = [];
+  dbHideDates = [];
+  settingsAccess = false;
   localStorage.removeItem('fa_user');
   localStorage.removeItem('fa_user_num');
   localStorage.removeItem('fa_group');
@@ -249,6 +260,9 @@ document.getElementById('btn-logout').addEventListener('click', () => {
   document.getElementById('user-menu-dropdown').classList.remove('open');
   document.getElementById('dashboard-screen').style.display = 'none';
   document.getElementById('login-screen').style.display     = 'flex';
+  if (logoutError) {
+    document.getElementById('login-error').textContent = 'Could not end the server session. Please retry logout.';
+  }
 });
 
 // ── RESTORE LOGIN AFTER PAGE REFRESH ─────────────────────────────────────────

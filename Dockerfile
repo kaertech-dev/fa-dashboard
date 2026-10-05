@@ -1,20 +1,31 @@
 FROM python:3.11-slim
 
-ENV PYTHONDONTWRITEBYTECODE 1 
-ENV PYTHONUNBUFFERED 1
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    TZ=Asia/Manila
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
     gcc \
+    tzdata \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+    && echo $TZ > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt /app/requirements.txt
+WORKDIR /app
 
-RUN pip install --no-cache-dir -r /app/requirements.txt
+RUN addgroup --system app \
+    && adduser --system --ingroup app --home /app app \
+    && chown app:app /app
 
-COPY . .
+COPY requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY --chown=app:app . .
 
 EXPOSE 5007
+
+USER app
 
 CMD ["gunicorn", "--workers", "2", "--bind", "0.0.0.0:5007", "app:app"]

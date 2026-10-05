@@ -17,6 +17,12 @@ _CACHE = {
     'run_units': {},
 }
 _CACHE_TTL = 300  # seconds
+_TABLE_COLUMNS_TTL = 300  # seconds
+
+
+def _quote_identifier(value):
+    return "`" + value.replace("`", "``") + "`"
+
 
 class Customer:
     """Reads active projects from projectsdb via SQLAlchemy engine."""
@@ -146,14 +152,19 @@ class ActiveProjects:
             product_id, model_id, station_id = spec
             table = f"{model_id}_{station_id}"
             metadata_key = (product_id, table)
-            columns = _CACHE['table_columns'].get(metadata_key)
+            now = time.time()
+            for key, (_, cached_at) in list(_CACHE['table_columns'].items()):
+                if now - cached_at >= _TABLE_COLUMNS_TTL:
+                    _CACHE['table_columns'].pop(key, None)
+            cached_columns = _CACHE['table_columns'].get(metadata_key)
+            columns = cached_columns[0] if cached_columns else None
             if columns is None:
                 try:
                     with projects_engine.connect() as conn:
                         columns = [row[0] for row in conn.execute(
                             text(f"SHOW COLUMNS FROM `{product_id}`.`{table}`")
                         )]
-                    _CACHE['table_columns'][metadata_key] = columns
+                    _CACHE['table_columns'][metadata_key] = (columns, now)
                 except Exception as e:
                     print(f"[RunUnits] columns '{product_id}'.'{table}': {e}")
                     return 0
@@ -210,9 +221,12 @@ class StationLog:
         self._active = active_projects or ActiveProjects()
 
     def _columns(self, schemadb, table):
+        schema_id = schemadb
         try:
             with projects_engine.connect() as conn:
-                result = conn.execute(text(f"SHOW COLUMNS FROM `{schemadb}`.`{table}`"))
+                result = conn.execute(text(
+                    f"SHOW COLUMNS FROM {_quote_identifier(schema_id)}.{_quote_identifier(table)}"
+                ))
                 return [r[0] for r in result]
         except Exception as e:
             print(f"[StationLog] columns for '{schemadb}'.'{table}': {e}")
@@ -226,7 +240,8 @@ class StationLog:
         return None
 
     def _query_table(self, schemadb, model, station, table, serial_num):
-        columns = self._columns(schemadb, table)
+        schema_id = schemadb
+        columns = self._columns(schema_id, table)
         if not columns:
             return None
 
@@ -236,16 +251,16 @@ class StationLog:
 
         remarks_col = self._pick(columns, self._REMARKS_CANDIDATES)
         dt_col      = self._pick(columns, self._DATETIME_CANDIDATES)
-        po_col      = self._pick(columns, self._PO_CANDIDATES)  # NEW
+        po_col      = self._pick(columns, self._PO_CANDIDATES)
 
         order_col = dt_col or self._pick(columns, ['id'])
-        order_sql = f"ORDER BY `{order_col}` DESC" if order_col else ""
+        order_sql = f"ORDER BY {_quote_identifier(order_col)} DESC" if order_col else ""
 
         try:
             with projects_engine.connect() as conn:
                 sql = (
-                    f"SELECT * FROM `{schemadb}`.`{table}` "
-                    f"WHERE `{serial_col}` = :serial {order_sql} LIMIT 1"
+                    f"SELECT * FROM {_quote_identifier(schema_id)}.{_quote_identifier(table)} "
+                    f"WHERE {_quote_identifier(serial_col)} = :serial {order_sql} LIMIT 1"
                 )
                 result = conn.execute(text(sql), {"serial": serial_num})
                 row = result.mappings().fetchone()
@@ -262,7 +277,7 @@ class StationLog:
             "station":      station,
             "remarks":      (row.get(remarks_col) if remarks_col else None) or "",
             "log_datetime": str(row.get(dt_col)) if dt_col and row.get(dt_col) else None,
-            "po_num":       (row.get(po_col) if po_col else None) or "",  # NEW
+            "po_num":       (row.get(po_col) if po_col else None) or "",
         }
 
     def find_last_log(self, serial_num):
@@ -296,7 +311,6 @@ class StationLog:
         matches.sort(key=lambda m: m.get("log_datetime") or "", reverse=True)
         return matches[0]
         
-    # NEW
     def update_remarks(self, schemadb, model, station, serial_num, remarks):
         """
         Write remarks back into the production/test station table's remarks
@@ -306,8 +320,27 @@ class StationLog:
         fills them in during endorsement — so the source-of-truth production
         record gets the same description, not just fa.main.
         """
+        schema_id = schemadb
+        projects = {
+            project["id"] for project in self._active.get_active_products()
+        }
+        if schema_id not in projects:
+            raise ValueError("Unknown active product.")
+
+        models = {
+            item["id"] for item in self._active.get_models_by_product(schema_id)
+        }
+        if model not in models:
+            raise ValueError("Unknown model for the selected product.")
+
+        stations = {
+            item["id"] for item in self._active.get_stations_by_model(schema_id, model)
+        }
+        if station not in stations:
+            raise ValueError("Unknown station for the selected model.")
+
         table = f"{model}_{station}"
-        columns = self._columns(schemadb, table)
+        columns = self._columns(schema_id, table)
         if not columns:
             return False
 
@@ -318,13 +351,17 @@ class StationLog:
             return False
 
         order_col = dt_col or self._pick(columns, ['id'])
-        order_sql = f"ORDER BY `{order_col}` DESC" if order_col else ""
+        order_sql = f"ORDER BY {_quote_identifier(order_col)} DESC" if order_col else ""
 
         try:
             with projects_engine.connect() as conn:
                 result = conn.execute(text(
-                    f"UPDATE `{schemadb}`.`{table}` SET `{remarks_col}` = :remarks "
-                    f"WHERE `{serial_col}` = :serial {order_sql} LIMIT 1"
+                    f"UPDATE {_quote_identifier(schema_id)}.{_quote_identifier(table)} "
+                    f"SET {_quote_identifier(remarks_col)} = :remarks "
+                    f"WHERE {_quote_identifier(serial_col)} = :serial "
+                    f"AND ({_quote_identifier(remarks_col)} IS NULL "
+                    f"OR TRIM({_quote_identifier(remarks_col)}) = '') "
+                    f"{order_sql} LIMIT 1"
                 ), {"remarks": remarks, "serial": serial_num})
                 conn.commit()
                 return result.rowcount > 0

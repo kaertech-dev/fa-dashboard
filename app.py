@@ -2,6 +2,7 @@
 import os
 import time
 import gzip
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from io import BytesIO
@@ -21,6 +22,9 @@ active_projects = ActiveProjects()
 station_log     = StationLog(active_projects)
 _dashboard_data_cache = {"expires_at": 0, "payload": None}
 _run_units_jobs = {}
+_cache_lock = threading.Lock()
+_RUN_UNITS_JOB_TTL = 900
+_MAX_RUN_UNITS_JOBS = 256
 _run_units_executor = ThreadPoolExecutor(max_workers=1)
 
 @app.after_request
@@ -28,6 +32,7 @@ def compress_json_response(response):
     """Compress large JSON responses when the client advertises gzip support."""
     accepts_gzip = "gzip" in request.headers.get("Accept-Encoding", "").lower()
     content_type = response.headers.get("Content-Type", "")
+    # Unknown content lengths are left untouched because the body may be streamed.
     if accepts_gzip and content_type.startswith("application/json") and response.content_length and response.content_length > 1024:
         compressed = gzip.compress(response.get_data())
         response.set_data(compressed)
@@ -44,16 +49,10 @@ def normalize_hide_date(value):
         return value.strftime("%Y-%m-%d")
 
     text = str(value).strip()
-    for date_format in (
-        "%Y-%m-%d",
-        "%a, %d %b %Y GMT",
-        "%d %b %Y GMT",
-    ):
-        try:
-            return datetime.strptime(text, date_format).strftime("%Y-%m-%d")
-        except ValueError:
-            continue
-    return None
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError:
+        return None
 
 # ── Group-based access guard (defense in depth — UI also hides these) ─────────
 def require_group(*groups):
@@ -61,12 +60,23 @@ def require_group(*groups):
     def decorator(fn):
         @wraps(fn)
         def wrapper(*args, **kwargs):
-            user_group = session.get('group')
-            if user_group != 'ADMIN' and user_group not in groups:
+            if not session.get("employee_num"):
+                return jsonify({"ok": False, "error": "Not logged in."}), 401
+            user_group = (session.get("group") or "").upper()
+            if user_group != "ADMIN" and user_group not in groups:
                 return jsonify({"ok": False, "error": "You do not have access to this action."}), 403
             return fn(*args, **kwargs)
         return wrapper
     return decorator
+
+def require_login(fn):
+    """Restrict an endpoint to users with an authenticated session."""
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not session.get("employee_num"):
+            return jsonify({"ok": False, "error": "Not logged in."}), 401
+        return fn(*args, **kwargs)
+    return wrapper
 
 # ── Pages ──────────────────────────────────────────────────────────────────────
 
@@ -111,9 +121,15 @@ def login():
             return jsonify({"ok": False, "error": "Invalid employee number or badge."})
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
-    
+
+@app.route("/api/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return jsonify({"ok": True})
+
 # =================================================================================================endorsement
 @app.route("/api/endorsement/lookup/<serial_num>", methods=["GET"])
+@require_login
 def endorsement_lookup(serial_num):
     """
     Unlike the other lookups, a serial NOT being found is a normal, expected
@@ -133,6 +149,7 @@ def endorsement_lookup(serial_num):
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
 @app.route("/api/endorsement/station_log/<serial_num>", methods=["GET"])
+@require_login
 def endorsement_station_log(serial_num):
     """
     Search the active test/production station logs for this serial's most
@@ -148,6 +165,7 @@ def endorsement_station_log(serial_num):
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
 @app.route("/api/endorsement/products", methods=["GET"])
+@require_login
 def endorsement_products():
     """Active customers/products, pulled live from projectsdb (active_customer.py)."""
     try:
@@ -156,6 +174,7 @@ def endorsement_products():
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
 @app.route("/api/endorsement/models", methods=["GET"])
+@require_login
 def endorsement_models():
     """Models available under a given active product/schema."""
     product = request.args.get("product", "").strip()
@@ -167,6 +186,7 @@ def endorsement_models():
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
 @app.route("/api/endorsement/stations", methods=["GET"])
+@require_login
 def endorsement_stations():
     """Stations available under a given product + model."""
     product = request.args.get("product", "").strip()
@@ -199,6 +219,8 @@ def endorsement_update_remarks():
     try:
         updated = station_log.update_remarks(product, model, station, serial_num, remarks)
         return jsonify({"ok": True, "updated": updated})
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
         
@@ -242,6 +264,7 @@ def update_endorsement_route():
 
 # =================================================================================================failure_analysis
 @app.route("/api/failure_analysis/lookup/<serial_num>", methods=["GET"])
+@require_login
 def fa_lookup(serial_num):
     try:
         row = get_fa_by_serial(serial_num.strip())
@@ -257,6 +280,7 @@ def fa_lookup(serial_num):
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
 @app.route("/api/failure_analysis/options", methods=["GET"])
+@require_login
 def fa_options():
     try:
         conn = get_fa_conn()
@@ -312,6 +336,7 @@ def update_fa_route():
 
 # =================================================================================================rework
 @app.route("/api/rework/lookup/<serial_num>", methods=["GET"])
+@require_login
 def rework_lookup(serial_num):
     try:
         row = get_fa_by_serial(serial_num.strip())
@@ -326,6 +351,7 @@ def rework_lookup(serial_num):
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
 @app.route("/api/rework/options", methods=["GET"])
+@require_login
 def rework_options():
     try:
         return jsonify({"ok": True, "action_taken": get_distinct_values("action_taken")})
@@ -365,6 +391,7 @@ def update_rework_route():
 
 # =================================================================================================return
 @app.route("/api/return/lookup/<serial_num>", methods=["GET"])
+@require_login
 def return_lookup(serial_num):
     try:
         row = get_fa_by_serial(serial_num.strip())
@@ -405,6 +432,7 @@ def return_rework():
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
 @app.route("/api/change_password", methods=["POST"])
+@require_login
 def change_password():
     data    = request.get_json(silent=True)
     cur_b   = data.get("current_badge", "").strip()
@@ -434,6 +462,7 @@ def change_password():
 
 
 @app.route("/api/employees", methods=["GET"])
+@require_login
 def get_employees():
     """Return all employee names for selection in admin settings."""
     try:
@@ -496,6 +525,7 @@ def create_user():
 
 # ── FA Data ────────────────────────────────────────────────────────────────────
 @app.route("/api/data", methods=["GET"])
+@require_login
 def data():
     date_from = request.args.get("date_from", "").strip()
     date_to = request.args.get("date_to", "").strip()
@@ -503,32 +533,46 @@ def data():
 
     cache_key = (date_from, date_to, date_effective)
     now = time.time()
-    if _dashboard_data_cache.get("key") == cache_key and _dashboard_data_cache["payload"] is not None and now < _dashboard_data_cache["expires_at"]:
-        return jsonify(_dashboard_data_cache["payload"])
+    with _cache_lock:
+        cached_payload = (
+            _dashboard_data_cache["payload"]
+            if _dashboard_data_cache.get("key") == cache_key
+            and _dashboard_data_cache["payload"] is not None
+            and now < _dashboard_data_cache["expires_at"]
+            else None
+        )
+    if cached_payload is not None:
+        return jsonify(cached_payload)
 
-    date_clause = ""
-    date_params = []
     if not date_from or not date_to:
         return jsonify({"ok": False, "error": "Both date_from and date_to are required."}), 400
-    if date_from or date_to:
-        try:
-            start = datetime.strptime(date_from, "%Y-%m-%d")
-            end = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
-        except ValueError:
-            return jsonify({"ok": False, "error": "Dates must use YYYY-MM-DD."}), 400
-        if date_from > date_to:
-            return jsonify({"ok": False, "error": "date_from cannot be after date_to."}), 400
+    try:
+        start = datetime.strptime(date_from, "%Y-%m-%d")
+        end = datetime.strptime(date_to, "%Y-%m-%d")
+    except ValueError:
+        return jsonify({"ok": False, "error": "Dates must use YYYY-MM-DD."}), 400
+    if start > end:
+        return jsonify({"ok": False, "error": "date_from cannot be after date_to."}), 400
+    end += timedelta(days=1)
 
-        # Clamp the requested start to the user's effective date, if one is set.
-        # date_effective is stored as "%Y-%m-%d %H:%M:%S" — parse it fully,
-        # then compare as datetimes, not as mismatched strings.
-        if date_effective:
-            effective_start = datetime.strptime(date_effective, "%Y-%m-%d %H:%M:%S")
-            if start < effective_start:
-                start = effective_start
+    # Clamp the requested start to the user's effective date, if one is set.
+    # date_effective is stored as "%Y-%m-%d %H:%M:%S" — parse it fully,
+    # then compare as datetimes, not as mismatched strings.
+    if date_effective:
+        effective_start = datetime.strptime(date_effective, "%Y-%m-%d %H:%M:%S")
+        if start < effective_start:
+            start = effective_start
 
-        date_clause = "WHERE fa_records.faendorse_datetime >= %s AND fa_records.faendorse_datetime < %s"
-        date_params = [start, end]
+    date_clause = """
+        WHERE fa_records.faendorse_datetime >= %s
+          AND fa_records.faendorse_datetime < %s
+          AND NOT EXISTS (
+              SELECT 1
+              FROM fa.fa_analysis AS hidden_dates
+              WHERE hidden_dates.hide_dates = DATE(fa_records.faendorse_datetime)
+          )
+    """
+    date_params = [start, end]
 
     try:
         conn = get_fa_conn()
@@ -555,14 +599,16 @@ def data():
                 for k, v in r.items()
             })
         payload = {"ok": True, "rows": clean}
-        _dashboard_data_cache["key"] = cache_key
-        _dashboard_data_cache["payload"] = payload
-        _dashboard_data_cache["expires_at"] = now + 5
+        with _cache_lock:
+            _dashboard_data_cache["key"] = cache_key
+            _dashboard_data_cache["payload"] = payload
+            _dashboard_data_cache["expires_at"] = time.time() + 5
         return jsonify(payload)
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
 @app.route("/api/data_dates", methods=["GET"])
+@require_login
 def data_dates():
     """Return available FA endorsement dates without sending full records."""
     date_effective = session.get("date_effective")
@@ -576,6 +622,11 @@ def data_dates():
                     FROM fa.main
                     WHERE faendorse_datetime IS NOT NULL
                       AND faendorse_datetime >= %s
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM fa.fa_analysis AS hidden_dates
+                          WHERE hidden_dates.hide_dates = DATE(fa.main.faendorse_datetime)
+                      )
                     ORDER BY fa_date DESC
                     """,
                     (date_effective,)
@@ -586,6 +637,11 @@ def data_dates():
                     SELECT DISTINCT DATE(faendorse_datetime) AS fa_date
                     FROM fa.main
                     WHERE faendorse_datetime IS NOT NULL
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM fa.fa_analysis AS hidden_dates
+                          WHERE hidden_dates.hide_dates = DATE(fa.main.faendorse_datetime)
+                      )
                     ORDER BY fa_date DESC
                     """
                 )
@@ -596,6 +652,7 @@ def data_dates():
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
 @app.route("/api/run_units", methods=["GET"])
+@require_login
 def run_units():
     """Count distinct production serials for a dashboard date/filter set."""
     date_from = request.args.get("date_from", "").strip()
@@ -608,39 +665,63 @@ def run_units():
         return jsonify({"ok": True, "run_units": 0})
     try:
         start = datetime.strptime(date_from, "%Y-%m-%d")
-        end = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
+        end = datetime.strptime(date_to, "%Y-%m-%d")
     except ValueError:
         return jsonify({"ok": False, "error": "Dates must use YYYY-MM-DD."}), 400
-    if date_from > date_to:
+    if start > end:
         return jsonify({"ok": False, "error": "date_from cannot be after date_to."}), 400
+    end += timedelta(days=1)
     cache_key = (date_from, date_to, product, model, station)
-    job = _run_units_jobs.get(cache_key)
-    if job is None:
-        job = {
-            "value": None,
-            "refreshing": False,
-            "updated_at": 0,
-        }
-        _run_units_jobs[cache_key] = job
+    refresh_job = None
+    now = time.time()
+    with _cache_lock:
+        expired_keys = [
+            key for key, existing_job in _run_units_jobs.items()
+            if not existing_job["refreshing"]
+            and now - existing_job["updated_at"] >= _RUN_UNITS_JOB_TTL
+        ]
+        for key in expired_keys:
+            _run_units_jobs.pop(key, None)
 
-    if not job["refreshing"] and time.time() - job["updated_at"] >= 15:
-        job["refreshing"] = True
+        job = _run_units_jobs.get(cache_key)
+        if job is None:
+            while len(_run_units_jobs) >= _MAX_RUN_UNITS_JOBS:
+                oldest_key = next(iter(_run_units_jobs))
+                oldest_job = _run_units_jobs.pop(oldest_key)
+                if oldest_job.get("future") is not None:
+                    oldest_job["future"].cancel()
+            job = {
+                "value": None,
+                "refreshing": False,
+                "updated_at": 0,
+                "future": None,
+            }
+            _run_units_jobs[cache_key] = job
 
-        def refresh_run_units():
-            try:
-                job["value"] = active_projects.count_run_units(start, end, product, model, station)
-                job["updated_at"] = time.time()
-            except Exception as exc:
-                print(f"[RunUnits] background refresh failed: {exc}")
-            finally:
-                job["refreshing"] = False
+        if not job["refreshing"] and now - job["updated_at"] >= 15:
+            job["refreshing"] = True
+            refresh_job = job
 
-        _run_units_executor.submit(refresh_run_units)
+            def refresh_run_units():
+                try:
+                    value = active_projects.count_run_units(start, end, product, model, station)
+                    with _cache_lock:
+                        refresh_job["value"] = value
+                        refresh_job["updated_at"] = time.time()
+                except Exception as exc:
+                    print(f"[RunUnits] background refresh failed: {exc}")
+                finally:
+                    with _cache_lock:
+                        refresh_job["refreshing"] = False
 
+            refresh_job["future"] = _run_units_executor.submit(refresh_run_units)
+
+        response_value = job["value"]
+        response_refreshing = job["refreshing"]
     return jsonify({
         "ok": True,
-        "run_units": job["value"],
-        "refreshing": job["refreshing"],
+        "run_units": response_value,
+        "refreshing": response_refreshing,
     })
     
 def _clean_rows(rows):
@@ -651,6 +732,7 @@ def _clean_rows(rows):
     ]
 
 @app.route("/api/open_farepaire_status", methods=["GET"])
+@require_login
 def get_open_fa():
     conn = get_fa_conn()
     try:
@@ -666,6 +748,7 @@ def get_open_fa():
 
 
 @app.route("/api/hide_dates", methods=["GET"])
+@require_login
 def get_hide_dates():
     """Fetch all hidden dates from fa.fa_analysis table."""
     try:
@@ -690,6 +773,7 @@ def get_hide_dates():
 
 
 @app.route("/api/authorized_persons", methods=["GET"])
+@require_login
 def get_authorized_persons():
     """Fetch all employee names to choose from for hide-date authorization."""
     try:
@@ -709,6 +793,7 @@ def get_authorized_persons():
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
 @app.route("/api/settings_access", methods=["GET"])
+@require_login
 def settings_access():
     """Return whether the signed-in user may manage dashboard hide dates."""
     employee_num = session.get("employee_num")
@@ -770,6 +855,7 @@ def save_authorized_person():
 
 
 @app.route("/api/hide_dates_save", methods=["POST"])
+@require_group("FA", "PROCESS")
 def save_hide_dates():
     """Append missing hidden-date rows for one authorized person."""
     data = request.get_json(silent=True) or {}
@@ -826,6 +912,7 @@ def save_hide_dates():
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
 @app.route("/api/wip_farepair_status", methods=["GET"])
+@require_login
 def get_wip_fa():
     conn = get_fa_conn()
     try:
@@ -840,6 +927,7 @@ def get_wip_fa():
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
 @app.route("/api/closed_farepair_status", methods=["GET"])
+@require_login
 def get_close_fa():
     conn = get_fa_conn()
     try:

@@ -157,33 +157,55 @@ def generate_fa_case(conn):
     return f"{prefix}{next_num:03d}"
 
 def update_fa(serial_num: str, fields: dict):
-    """Update the editable FA fields for a given serial number."""
+    """Update the editable FA fields and preserve/assign one stable FA case."""
     allowed = {
         "failure_cause", "affected_comp", "fa_pic",
         "proposed_action", "defect_cat", "fa_class",
-        "fa_case","faended_datetime"
+        "fa_case", "faended_datetime", "farepair_status",
     }
 
     conn = get_fa_conn()
-    
+    lock_acquired = False
+    transaction_committed = False
     try:
-        if "fa_case" not in fields or not fields["fa_case"]:
-            fields["fa_case"] = generate_fa_case(conn)
-        
-        set_cols = [k for k in fields if k in allowed]
-        if not set_cols:
-            return False
-        
         with conn.cursor() as cur:
-            set_clause = ", ".join(f"{c} = %s" for c in set_cols)
-            values = [fields[c] for c in set_cols] + [serial_num]
+            cur.execute("SELECT GET_LOCK(%s, 10) AS acquired", ("fa_case_generation",))
+            lock_result = cur.fetchone()
+            if not lock_result or lock_result["acquired"] != 1:
+                raise RuntimeError("Could not acquire the FA case number lock.")
+            lock_acquired = True
+
+            cur.execute(
+                "SELECT fa_case FROM fa.main WHERE serial_num = %s LIMIT 1 FOR UPDATE",
+                (serial_num,),
+            )
+            existing = cur.fetchone()
+            if existing is None:
+                return False
+
+            update_fields = {key: value for key, value in fields.items() if key in allowed}
+            update_fields["fa_case"] = existing.get("fa_case") or generate_fa_case(conn)
+            if not update_fields:
+                return False
+
+            set_cols = list(update_fields)
+            set_clause = ", ".join(f"{column} = %s" for column in set_cols)
+            values = [update_fields[column] for column in set_cols] + [serial_num]
             cur.execute(
                 f"UPDATE fa.main SET {set_clause} WHERE serial_num = %s",
                 values,
             )
             conn.commit()
+            transaction_committed = True
     finally:
-        conn.close()
+        try:
+            if lock_acquired:
+                if not transaction_committed:
+                    conn.rollback()
+                with conn.cursor() as cur:
+                    cur.execute("SELECT RELEASE_LOCK(%s)", ("fa_case_generation",))
+        finally:
+            conn.close()
     return True
 
 def update_rework(serial_num: str, fields: dict):

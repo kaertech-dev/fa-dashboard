@@ -2,14 +2,9 @@ import os
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.engine import URL
+from env_config import required_env
 
 load_dotenv()
-
-def required_env(name):
-    value = os.getenv(name)
-    if not value:
-        raise RuntimeError(f"Required environment variable {name} is not set")
-    return value
 
 # FA production/run-unit source: projectsdb
 proj_host=required_env("PROJECTS_DB_HOST")

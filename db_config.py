@@ -1,5 +1,7 @@
 import os
 import pymysql.cursors
+from env_config import required_env
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -8,16 +10,10 @@ except Exception:
     # environment variables provided by the runtime.
     pass
 
-def _required_env(name):
-    value = os.getenv(name)
-    if not value:
-        raise RuntimeError(f"Required environment variable {name} is not set")
-    return value
-
-DB_HOST = _required_env("DB_HOST")
+DB_HOST = required_env("DB_HOST")
 DB_PORT = int(os.getenv("DB_PORT", "3306"))
-DB_USER = _required_env("DB_USER")
-DB_PASSWORD = _required_env("DB_PASSWORD")
+DB_USER = required_env("DB_USER")
+DB_PASSWORD = required_env("DB_PASSWORD")
 
 DB_FA = dict(
     host     = DB_HOST,
@@ -28,4 +24,3 @@ DB_FA = dict(
     charset  = "utf8mb4",
     cursorclass = pymysql.cursors.DictCursor,
 )
-
