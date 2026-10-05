@@ -14,9 +14,14 @@ from functions import (
 )
 from active_customer import ActiveProjects, StationLog
 from datetime import datetime, timedelta
+from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 app = Flask(__name__)
 app.secret_key = os.environ["SECRET_KEY"]
+_station_log_serializer = URLSafeTimedSerializer(
+    app.secret_key,
+    salt="fa-station-log-writeback",
+)
 
 active_projects = ActiveProjects()
 station_log     = StationLog(active_projects)
@@ -127,6 +132,19 @@ def logout():
     session.clear()
     return jsonify({"ok": True})
 
+@app.route("/api/me", methods=["GET"])
+@require_login
+def current_user():
+    """Return the authenticated user from the active server-side session."""
+    return jsonify({
+        "ok": True,
+        "user": {
+            "employee_num": session["employee_num"],
+            "employee_name": session.get("employee_name") or session["employee_num"],
+            "group": session.get("group", ""),
+        },
+    })
+
 # =================================================================================================endorsement
 @app.route("/api/endorsement/lookup/<serial_num>", methods=["GET"])
 @require_login
@@ -160,7 +178,20 @@ def endorsement_station_log(serial_num):
         hit = station_log.find_last_log(serial_num.strip())
         if hit is None:
             return jsonify({"ok": True, "found": False})
-        return jsonify({"ok": True, "found": True, "log": hit})
+        log = dict(hit)
+        row_locator = log.pop("row_locator", None)
+        log["row_ref"] = (
+            _station_log_serializer.dumps({
+                "product": log["product"],
+                "model": log["model"],
+                "station": log["station"],
+                "serial_num": serial_num.strip(),
+                "row_locator": row_locator,
+            })
+            if row_locator
+            else None
+        )
+        return jsonify({"ok": True, "found": True, "log": log})
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
@@ -212,13 +243,33 @@ def endorsement_update_remarks():
     station    = data.get("station", "").strip()
     serial_num = data.get("serial_num", "").strip()
     remarks    = data.get("remarks", "").strip()
+    row_ref    = data.get("row_ref")
 
     if not (product and model and station and serial_num):
         return jsonify({"ok": False, "error": "Missing product/model/station/serial_num."})
+    if not isinstance(row_ref, str) or not row_ref:
+        return jsonify({"ok": False, "error": "Missing or invalid station-log reference."}), 400
 
     try:
-        updated = station_log.update_remarks(product, model, station, serial_num, remarks)
+        row_reference = _station_log_serializer.loads(row_ref, max_age=1800)
+        if (
+            row_reference.get("product") != product
+            or row_reference.get("model") != model
+            or row_reference.get("station") != station
+            or row_reference.get("serial_num") != serial_num
+        ):
+            return jsonify({"ok": False, "error": "Station-log reference does not match this unit."}), 400
+        updated = station_log.update_remarks(
+            product,
+            model,
+            station,
+            serial_num,
+            remarks,
+            row_reference.get("row_locator"),
+        )
         return jsonify({"ok": True, "updated": updated})
+    except BadSignature:
+        return jsonify({"ok": False, "error": "Station-log reference is invalid or expired."}), 400
     except ValueError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     except Exception as e:

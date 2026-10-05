@@ -22,6 +22,7 @@ document.getElementById('btn-endorsement-close').addEventListener('click', close
 document.getElementById('btn-endorsement-exit').addEventListener('click', closeEndorsementModal);
 
 let endorsementRemarksNeedsWriteback = false;
+let endorsementStationLogRef = null;
 
 function closeEndorsementModal() {
   document.getElementById('modal-endorsement').style.display = 'none';
@@ -43,6 +44,7 @@ function resetEndorsementForm() {
     'Please enter the employee number of the endorser.';
 
   endorsementRemarksNeedsWriteback = false;
+  endorsementStationLogRef = null;
 
   const endorserInput = document.getElementById('endorsement-endorser');
   endorserInput.value = localStorage.getItem('fa_user_num') || '';
@@ -217,6 +219,8 @@ async function scanEndorsementSerial() {
   const err    = document.getElementById('endorsement-error');
   const serial = document.getElementById('endorsement-serial').value.trim();
   err.textContent = '';
+  endorsementRemarksNeedsWriteback = false;
+  endorsementStationLogRef = null;
   if (!serial) return;
 
   try {
@@ -232,7 +236,6 @@ async function scanEndorsementSerial() {
       document.getElementById('endorsement-po').value = r.po_num || '';
       document.getElementById('endorsement-station').value = r.station || '';
       endorsementRemarksNeedsWriteback = false; // already in FA — not the fresh-scan path
-
       if (r.product) {
         ensureEndorsementOption('endorsement-product', r.product);
         document.getElementById('endorsement-product').value = r.product;
@@ -243,14 +246,6 @@ async function scanEndorsementSerial() {
           await loadEndorsementStationSuggestions(r.product, r.model);
         }
       }
-      const log = logJson.log;
-      document.getElementById('endorsement-station').value = log.station || '';
-      document.getElementById('endorsement-failure-mode').value = log.remarks || '';
-      document.getElementById('endorsement-po').value = log.po_num || '';
-
-      // No remarks on the production/test row — whatever the user types
-      // into Failure Mode here will be written back into that row too.
-      endorsementRemarksNeedsWriteback = !log.remarks;
 
       document.getElementById('endorsement-text-display').textContent =
 `SERIAL ALREADY REGISTERED:
@@ -287,7 +282,11 @@ You can review/update the details (Station is editable) and endorse again.`;
 
       // No remarks on the production/test row — whatever the user types
       // into Failure Mode here will be written back into that row too.
-      endorsementRemarksNeedsWriteback = !log.remarks;
+      endorsementStationLogRef = log.row_ref || null;
+      endorsementRemarksNeedsWriteback = !log.remarks && Boolean(endorsementStationLogRef);
+      if (!log.remarks && !endorsementStationLogRef) {
+        err.textContent = 'This station log has no primary key; remarks cannot be safely written back.';
+      }
 
       if (log.product) {
         ensureEndorsementOption('endorsement-product', log.product);
@@ -380,7 +379,14 @@ document.getElementById('btn-endorsement-submit').addEventListener('click', asyn
         const remarksRes  = await fetch('/api/endorsement/update_remarks', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ product, model, station, serial_num: serial, remarks: failMode })
+          body: JSON.stringify({
+            product,
+            model,
+            station,
+            serial_num: serial,
+            remarks: failMode,
+            row_ref: endorsementStationLogRef,
+          })
         });
         const remarksJson = await remarksRes.json();
         if (!remarksJson.ok) {

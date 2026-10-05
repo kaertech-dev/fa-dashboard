@@ -232,6 +232,22 @@ class StationLog:
             print(f"[StationLog] columns for '{schemadb}'.'{table}': {e}")
             return []
 
+    def _primary_key_columns(self, schemadb, table):
+        schema_id = schemadb
+        try:
+            with projects_engine.connect() as conn:
+                result = conn.execute(text(
+                    f"SHOW KEYS FROM {_quote_identifier(schema_id)}."
+                    f"{_quote_identifier(table)} WHERE Key_name = 'PRIMARY'"
+                ))
+                return [
+                    row["Column_name"]
+                    for row in result.mappings()
+                ]
+        except Exception as e:
+            print(f"[StationLog] primary key for '{schemadb}'.'{table}': {e}")
+            return []
+
     def _pick(self, columns, candidates):
         lower = {c.lower(): c for c in columns}
         for cand in candidates:
@@ -271,6 +287,17 @@ class StationLog:
         if not row:
             return None
 
+        primary_key_cols = self._primary_key_columns(schema_id, table)
+        row_locator = (
+            {
+                column: (
+                    str(row[column]) if row[column] is not None else None
+                )
+                for column in primary_key_cols
+            }
+            if primary_key_cols
+            else None
+        )
         return {
             "product":      schemadb,
             "model":        model,
@@ -278,6 +305,7 @@ class StationLog:
             "remarks":      (row.get(remarks_col) if remarks_col else None) or "",
             "log_datetime": str(row.get(dt_col)) if dt_col and row.get(dt_col) else None,
             "po_num":       (row.get(po_col) if po_col else None) or "",
+            "row_locator":  row_locator,
         }
 
     def find_last_log(self, serial_num):
@@ -311,7 +339,7 @@ class StationLog:
         matches.sort(key=lambda m: m.get("log_datetime") or "", reverse=True)
         return matches[0]
         
-    def update_remarks(self, schemadb, model, station, serial_num, remarks):
+    def update_remarks(self, schemadb, model, station, serial_num, remarks, row_locator):
         """
         Write remarks back into the production/test station table's remarks
         column, for the same row find_last_log() would have matched.
@@ -346,12 +374,27 @@ class StationLog:
 
         serial_col  = self._pick(columns, self._SERIAL_CANDIDATES)
         remarks_col = self._pick(columns, self._REMARKS_CANDIDATES)
-        dt_col      = self._pick(columns, self._DATETIME_CANDIDATES)
         if not serial_col or not remarks_col:
             return False
 
-        order_col = dt_col or self._pick(columns, ['id'])
-        order_sql = f"ORDER BY {_quote_identifier(order_col)} DESC" if order_col else ""
+        primary_key_cols = self._primary_key_columns(schema_id, table)
+        if not primary_key_cols or not isinstance(row_locator, dict):
+            return False
+        if set(row_locator) != set(primary_key_cols):
+            raise ValueError("Station-log reference does not match the table primary key.")
+
+        locator_clause = " AND ".join(
+            f"{_quote_identifier(column)} <=> :pk_{index}"
+            for index, column in enumerate(primary_key_cols)
+        )
+        params = {
+            "remarks": remarks,
+            "serial": serial_num,
+            **{
+                f"pk_{index}": row_locator[column]
+                for index, column in enumerate(primary_key_cols)
+            },
+        }
 
         try:
             with projects_engine.connect() as conn:
@@ -361,8 +404,8 @@ class StationLog:
                     f"WHERE {_quote_identifier(serial_col)} = :serial "
                     f"AND ({_quote_identifier(remarks_col)} IS NULL "
                     f"OR TRIM({_quote_identifier(remarks_col)}) = '') "
-                    f"{order_sql} LIMIT 1"
-                ), {"remarks": remarks, "serial": serial_num})
+                    f"AND {locator_clause}"
+                ), params)
                 conn.commit()
                 return result.rowcount > 0
         except Exception as e:

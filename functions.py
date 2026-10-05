@@ -189,8 +189,19 @@ def update_fa(serial_num: str, fields: dict):
                 return False
 
             set_cols = list(update_fields)
-            set_clause = ", ".join(f"{column} = %s" for column in set_cols)
-            values = [update_fields[column] for column in set_cols] + [serial_num]
+            assignments = []
+            values = []
+            for column in set_cols:
+                if column == "farepair_status" and update_fields[column] == 2:
+                    assignments.append(
+                        "`farepair_status` = CASE WHEN `farepair_status` = 1 "
+                        "THEN %s ELSE `farepair_status` END"
+                    )
+                else:
+                    assignments.append(f"{column} = %s")
+                values.append(update_fields[column])
+            set_clause = ", ".join(assignments)
+            values.append(serial_num)
             cur.execute(
                 f"UPDATE fa.main SET {set_clause} WHERE serial_num = %s",
                 values,

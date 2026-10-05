@@ -67,12 +67,14 @@ const fmt = escapeHtml;
 function statusLabel(v) {
   if (v == 1) return 'OPEN';
   if (v == 2) return 'WIP';
+  if (v == 3) return 'REWORKED';
   if (v == 4) return 'CLOSED';
   return '';
 }
 function statusTag(v) {
   if (v == 1) return `<span class="tag tag-open">OPEN</span>`;
   if (v == 2) return `<span class="tag tag-wip">WIP</span>`;
+  if (v == 3) return `<span class="tag tag-reworked">REWORKED</span>`;
   if (v == 4) return `<span class="tag tag-closed">CLOSED</span>`;
   return `<span class="tag" style="opacity:.4">–</span>`;
 }
@@ -228,6 +230,7 @@ async function doLogin() {
       document.getElementById('login-screen').style.display  = 'none';
       document.getElementById('dashboard-screen').style.display = 'block';
       await loadAndRender();
+      startAutoRefresh();
     } else {
       err.textContent = json.error || 'Login failed.';
     }
@@ -240,6 +243,7 @@ async function doLogin() {
 
 // ── LOGOUT ────────────────────────────────────────────────────────────────────
 document.getElementById('btn-logout').addEventListener('click', async () => {
+  stopAutoRefresh();
   let logoutError = null;
   try {
     const response = await fetch('/api/logout', { method: 'POST' });
@@ -267,20 +271,48 @@ document.getElementById('btn-logout').addEventListener('click', async () => {
 
 // ── RESTORE LOGIN AFTER PAGE REFRESH ─────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-  const savedUser  = localStorage.getItem('fa_user');
-  const savedGroup = localStorage.getItem('fa_group') || '';
+  try {
+    const response = await fetch('/api/me', { cache: 'no-store' });
+    if (response.status === 401) {
+      stopAutoRefresh();
+      allData = [];
+      filteredData = [];
+      settingsAccess = false;
+      localStorage.removeItem('fa_user');
+      localStorage.removeItem('fa_user_num');
+      localStorage.removeItem('fa_group');
+      applyGroupAccess('');
+      document.getElementById('dashboard-screen').style.display = 'none';
+      document.getElementById('login-screen').style.display = 'flex';
+      return;
+    }
+    if (!response.ok) {
+      throw new Error(`Server returned HTTP ${response.status}`);
+    }
 
-  if (savedUser) {
-    document.getElementById('user-label').textContent = savedUser;
-    applyGroupAccess(savedGroup);
+    const json = await response.json();
+    if (!json.ok || !json.user) {
+      throw new Error(json.error || 'Could not verify the server session.');
+    }
+
+    const name = json.user.employee_name || json.user.employee_num;
+    const group = json.user.group || '';
+    document.getElementById('user-label').textContent = name;
+    localStorage.setItem('fa_user', name);
+    localStorage.setItem('fa_user_num', json.user.employee_num || '');
+    localStorage.setItem('fa_group', group);
+    applyGroupAccess(group);
     await loadSettingsAccess();
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('dashboard-screen').style.display = 'block';
-
     await loadAndRender();
-
-    // Start refreshing only after the initial data has loaded
     startAutoRefresh();
+  } catch (error) {
+    console.error('[FA Dashboard] Session restore failed:', error);
+    stopAutoRefresh();
+    document.getElementById('dashboard-screen').style.display = 'none';
+    document.getElementById('login-screen').style.display = 'flex';
+    document.getElementById('login-error').textContent = 'Could not verify your session. Please sign in again.';
   }
 });
 
@@ -773,6 +805,13 @@ function startAutoRefresh() {
   refreshTimer = setInterval(refreshData, 5000);
 }
 
+function stopAutoRefresh() {
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+    refreshTimer = null;
+  }
+}
+
 // ── FILTERS ───────────────────────────────────────────────────────────────────
 function getFilterStorageKey() {
   const userNum = localStorage.getItem('fa_user_num') || 'guest';
@@ -1019,6 +1058,7 @@ function renderKPIs() {
   document.getElementById('kpi-total').textContent    = filteredData.length.toLocaleString();
   document.getElementById('kpi-open').textContent     = filteredData.filter(r=>r.farepair_status==1).length.toLocaleString();
   document.getElementById('kpi-wip').textContent      = filteredData.filter(r=>r.farepair_status==2).length.toLocaleString();
+  document.getElementById('kpi-reworked').textContent = filteredData.filter(r=>r.farepair_status==3).length.toLocaleString();
   document.getElementById('kpi-closed').textContent   = filteredData.filter(r=>r.farepair_status==4).length.toLocaleString();
   document.getElementById('kpi-products').textContent = new Set(filteredData.map(r=>r.product).filter(Boolean)).size;
   if (lastRunUnitsValue === null) {
