@@ -1,14 +1,11 @@
 # functions.py
 import pymysql.cursors
-from db_config import DB_FA, DB_PROJECTS
+from db_config import DB_FA
 import bcrypt
 from datetime import datetime
 
 def get_fa_conn():
     return pymysql.connect(**DB_FA)
-
-def get_projects_conn():
-    return pymysql.connect(**DB_PROJECTS)
 
 def hash_badge(plain_badge: str) -> str:
     """
@@ -44,7 +41,7 @@ def authenticate(employee_num: str, badge_raw: str):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT employee_num, employee_name, badge, `group` AS user_group
+                SELECT employee_num, employee_name, badge, `group` AS user_group, dataeffective_datetime
                 FROM userv2
                 WHERE employee_num = %s
                 LIMIT 1
@@ -67,7 +64,7 @@ def get_fa_by_serial(serial_num: str):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT * FROM fa.main_copy WHERE serial_num = %s LIMIT 1",
+                "SELECT * FROM fa.main WHERE serial_num = %s LIMIT 1",
                 (serial_num,),
             )
             row = cur.fetchone()
@@ -123,7 +120,7 @@ def get_distinct_values(column: str, limit: int = 200):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                f"SELECT DISTINCT {column} AS v FROM fa.main_copy "
+                f"SELECT DISTINCT {column} AS v FROM fa.main "
                 f"WHERE {column} IS NOT NULL AND {column} <> '' "
                 f"ORDER BY {column} LIMIT %s",
                 (limit,),
@@ -143,7 +140,7 @@ def generate_fa_case(conn):
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT fa_case FROM fa.main_copy
+            SELECT fa_case FROM fa.main
             WHERE fa_case LIKE %s
             ORDER BY fa_case DESC
             LIMIT 1
@@ -160,33 +157,66 @@ def generate_fa_case(conn):
     return f"{prefix}{next_num:03d}"
 
 def update_fa(serial_num: str, fields: dict):
-    """Update the editable FA fields for a given serial number."""
+    """Update the editable FA fields and preserve/assign one stable FA case."""
     allowed = {
         "failure_cause", "affected_comp", "fa_pic",
         "proposed_action", "defect_cat", "fa_class",
-        "fa_case","faended_datetime"
+        "fa_case", "faended_datetime", "farepair_status",
     }
 
     conn = get_fa_conn()
-    
+    lock_acquired = False
+    transaction_committed = False
     try:
-        if "fa_case" not in fields or not fields["fa_case"]:
-            fields["fa_case"] = generate_fa_case(conn)
-        
-        set_cols = [k for k in fields if k in allowed]
-        if not set_cols:
-            return False
-        
         with conn.cursor() as cur:
-            set_clause = ", ".join(f"{c} = %s" for c in set_cols)
-            values = [fields[c] for c in set_cols] + [serial_num]
+            cur.execute("SELECT GET_LOCK(%s, 10) AS acquired", ("fa_case_generation",))
+            lock_result = cur.fetchone()
+            if not lock_result or lock_result["acquired"] != 1:
+                raise RuntimeError("Could not acquire the FA case number lock.")
+            lock_acquired = True
+
             cur.execute(
-                f"UPDATE fa.main_copy SET {set_clause} WHERE serial_num = %s",
+                "SELECT fa_case FROM fa.main WHERE serial_num = %s LIMIT 1 FOR UPDATE",
+                (serial_num,),
+            )
+            existing = cur.fetchone()
+            if existing is None:
+                return False
+
+            update_fields = {key: value for key, value in fields.items() if key in allowed}
+            update_fields["fa_case"] = existing.get("fa_case") or generate_fa_case(conn)
+            if not update_fields:
+                return False
+
+            set_cols = list(update_fields)
+            assignments = []
+            values = []
+            for column in set_cols:
+                if column == "farepair_status" and update_fields[column] == 2:
+                    assignments.append(
+                        "`farepair_status` = CASE WHEN `farepair_status` = 1 "
+                        "THEN %s ELSE `farepair_status` END"
+                    )
+                else:
+                    assignments.append(f"{column} = %s")
+                values.append(update_fields[column])
+            set_clause = ", ".join(assignments)
+            values.append(serial_num)
+            cur.execute(
+                f"UPDATE fa.main SET {set_clause} WHERE serial_num = %s",
                 values,
             )
             conn.commit()
+            transaction_committed = True
     finally:
-        conn.close()
+        try:
+            if lock_acquired:
+                if not transaction_committed:
+                    conn.rollback()
+                with conn.cursor() as cur:
+                    cur.execute("SELECT RELEASE_LOCK(%s)", ("fa_case_generation",))
+        finally:
+            conn.close()
     return True
 
 def update_rework(serial_num: str, fields: dict):
@@ -204,7 +234,7 @@ def update_rework(serial_num: str, fields: dict):
             set_clause = ", ".join(f"{c} = %s" for c in set_cols)
             values = [fields[c] for c in set_cols] + [serial_num]
             cur.execute(
-                f"UPDATE fa.main_copy SET {set_clause} WHERE serial_num = %s",
+                f"UPDATE fa.main SET {set_clause} WHERE serial_num = %s",
                 values,
             )
             conn.commit()
@@ -225,7 +255,7 @@ def return_rework(serial_num: str, fields: dict):
         with conn.cursor() as cur:
             set_clause = ", ".join(f"{c} = %s" for c in set_cols)
             values = [fields[c] for c in set_cols] + [serial_num]
-            cur.execute(f"UPDATE fa.main_copy SET {set_clause} WHERE serial_num = %s",
+            cur.execute(f"UPDATE fa.main SET {set_clause} WHERE serial_num = %s",
             values,
             )
             conn.commit()
@@ -235,7 +265,7 @@ def return_rework(serial_num: str, fields: dict):
 
 def create_or_update_endorsement(serial_num: str, fields: dict):
     """
-    Endorsement step: register a rejected unit into fa.main_copy.
+    Endorsement step: register a rejected unit into fa.main.
 
     - If the serial number already exists (re-endorsed / re-rejected), refresh
       its endorsement-stage fields.
@@ -258,7 +288,7 @@ def create_or_update_endorsement(serial_num: str, fields: dict):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT serial_num FROM fa.main_copy WHERE serial_num = %s LIMIT 1",
+                "SELECT serial_num FROM fa.main WHERE serial_num = %s LIMIT 1",
                 (serial_num,),
             )
             exists = cur.fetchone()
@@ -267,7 +297,7 @@ def create_or_update_endorsement(serial_num: str, fields: dict):
                 set_clause = ", ".join(f"{c} = %s" for c in fields)
                 values = list(fields.values()) + [serial_num]
                 cur.execute(
-                    f"UPDATE fa.main_copy SET {set_clause} WHERE serial_num = %s",
+                    f"UPDATE fa.main SET {set_clause} WHERE serial_num = %s",
                     values,
                 )
             else:
@@ -275,7 +305,7 @@ def create_or_update_endorsement(serial_num: str, fields: dict):
                 placeholders = ", ".join(["%s"] * len(cols))
                 values = [serial_num] + list(fields.values())
                 cur.execute(
-                    f"INSERT INTO fa.main_copy ({', '.join(cols)}) VALUES ({placeholders})",
+                    f"INSERT INTO fa.main ({', '.join(cols)}) VALUES ({placeholders})",
                     values,
                 )
             conn.commit()

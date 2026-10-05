@@ -140,8 +140,8 @@ document.getElementById('btn-rework-submit').addEventListener('click', async () 
   });
   const json = await res.json();
   if (json.ok) {
-    closeReworkModal();
     if (typeof loadAndRender === 'function') loadAndRender();
+    resetReworkForm();
   } else {
     err.textContent = json.error || 'Failed to update repair status.';
   }

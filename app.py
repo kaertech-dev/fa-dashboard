@@ -1,6 +1,11 @@
 # app.py
 import os
+import time
+import gzip
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
+from io import BytesIO
 from flask import Flask, request, jsonify, render_template, session, redirect
 from functions import (
     get_fa_conn, authenticate, hash_badge,
@@ -8,13 +13,51 @@ from functions import (
     create_or_update_endorsement,
 )
 from active_customer import ActiveProjects, StationLog
-from datetime import datetime
+from datetime import datetime, timedelta
+from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY", "fa_secret_key_change_me")
+app.secret_key = os.environ["SECRET_KEY"]
+_station_log_serializer = URLSafeTimedSerializer(
+    app.secret_key,
+    salt="fa-station-log-writeback",
+)
 
 active_projects = ActiveProjects()
 station_log     = StationLog(active_projects)
+_dashboard_data_cache = {"expires_at": 0, "payload": None}
+_run_units_jobs = {}
+_cache_lock = threading.Lock()
+_RUN_UNITS_JOB_TTL = 900
+_MAX_RUN_UNITS_JOBS = 256
+_run_units_executor = ThreadPoolExecutor(max_workers=1)
+
+@app.after_request
+def compress_json_response(response):
+    """Compress large JSON responses when the client advertises gzip support."""
+    accepts_gzip = "gzip" in request.headers.get("Accept-Encoding", "").lower()
+    content_type = response.headers.get("Content-Type", "")
+    # Unknown content lengths are left untouched because the body may be streamed.
+    if accepts_gzip and content_type.startswith("application/json") and response.content_length and response.content_length > 1024:
+        compressed = gzip.compress(response.get_data())
+        response.set_data(compressed)
+        response.headers["Content-Encoding"] = "gzip"
+        response.headers["Content-Length"] = str(len(compressed))
+        response.headers.add("Vary", "Accept-Encoding")
+    return response
+
+def normalize_hide_date(value):
+    """Return a hide date as YYYY-MM-DD for the fa_analysis DATE column."""
+    if value is None:
+        return None
+    if hasattr(value, "strftime"):
+        return value.strftime("%Y-%m-%d")
+
+    text = str(value).strip()
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError:
+        return None
 
 # ── Group-based access guard (defense in depth — UI also hides these) ─────────
 def require_group(*groups):
@@ -22,12 +65,23 @@ def require_group(*groups):
     def decorator(fn):
         @wraps(fn)
         def wrapper(*args, **kwargs):
-            user_group = session.get('group')
-            if user_group != 'ADMIN' and user_group not in groups:
+            if not session.get("employee_num"):
+                return jsonify({"ok": False, "error": "Not logged in."}), 401
+            user_group = (session.get("group") or "").upper()
+            if user_group != "ADMIN" and user_group not in groups:
                 return jsonify({"ok": False, "error": "You do not have access to this action."}), 403
             return fn(*args, **kwargs)
         return wrapper
     return decorator
+
+def require_login(fn):
+    """Restrict an endpoint to users with an authenticated session."""
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not session.get("employee_num"):
+            return jsonify({"ok": False, "error": "Not logged in."}), 401
+        return fn(*args, **kwargs)
+    return wrapper
 
 # ── Pages ──────────────────────────────────────────────────────────────────────
 
@@ -56,9 +110,13 @@ def login():
         row = authenticate(emp, badge)
         if row:
             group = row.get("user_group", "") or ""
+            effective_dt = row.get("dataeffective_datetime")
             session['employee_num']  = row['employee_num']
             session['employee_name'] = row.get('employee_name', emp)
             session['group']         = group
+            session['date_effective'] = (
+                effective_dt.strftime("%Y-%m-%d %H:%M:%S") if effective_dt else None
+            )
             return jsonify({"ok": True, "user": {
                 "employee_num": row["employee_num"],
                 "employee_name": row.get("employee_name", emp),
@@ -69,8 +127,27 @@ def login():
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
+@app.route("/api/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+@app.route("/api/me", methods=["GET"])
+@require_login
+def current_user():
+    """Return the authenticated user from the active server-side session."""
+    return jsonify({
+        "ok": True,
+        "user": {
+            "employee_num": session["employee_num"],
+            "employee_name": session.get("employee_name") or session["employee_num"],
+            "group": session.get("group", ""),
+        },
+    })
+
 # =================================================================================================endorsement
 @app.route("/api/endorsement/lookup/<serial_num>", methods=["GET"])
+@require_login
 def endorsement_lookup(serial_num):
     """
     Unlike the other lookups, a serial NOT being found is a normal, expected
@@ -90,6 +167,7 @@ def endorsement_lookup(serial_num):
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
 @app.route("/api/endorsement/station_log/<serial_num>", methods=["GET"])
+@require_login
 def endorsement_station_log(serial_num):
     """
     Search the active test/production station logs for this serial's most
@@ -100,11 +178,25 @@ def endorsement_station_log(serial_num):
         hit = station_log.find_last_log(serial_num.strip())
         if hit is None:
             return jsonify({"ok": True, "found": False})
-        return jsonify({"ok": True, "found": True, "log": hit})
+        log = dict(hit)
+        row_locator = log.pop("row_locator", None)
+        log["row_ref"] = (
+            _station_log_serializer.dumps({
+                "product": log["product"],
+                "model": log["model"],
+                "station": log["station"],
+                "serial_num": serial_num.strip(),
+                "row_locator": row_locator,
+            })
+            if row_locator
+            else None
+        )
+        return jsonify({"ok": True, "found": True, "log": log})
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
 @app.route("/api/endorsement/products", methods=["GET"])
+@require_login
 def endorsement_products():
     """Active customers/products, pulled live from projectsdb (active_customer.py)."""
     try:
@@ -113,6 +205,7 @@ def endorsement_products():
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
 @app.route("/api/endorsement/models", methods=["GET"])
+@require_login
 def endorsement_models():
     """Models available under a given active product/schema."""
     product = request.args.get("product", "").strip()
@@ -124,6 +217,7 @@ def endorsement_models():
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
 @app.route("/api/endorsement/stations", methods=["GET"])
+@require_login
 def endorsement_stations():
     """Stations available under a given product + model."""
     product = request.args.get("product", "").strip()
@@ -135,6 +229,52 @@ def endorsement_stations():
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
+@app.route("/api/endorsement/update_remarks", methods=["POST"])
+@require_group("FA")
+def endorsement_update_remarks():
+    """
+    Best-effort writeback: only called when the scanned unit's production
+    station-log row had no remarks, so what the user types into Failure
+    Mode here also becomes that row's remarks — not just test_failure in fa.main.
+    """
+    data = request.get_json(silent=True) or {}
+    product    = data.get("product", "").strip()
+    model      = data.get("model", "").strip()
+    station    = data.get("station", "").strip()
+    serial_num = data.get("serial_num", "").strip()
+    remarks    = data.get("remarks", "").strip()
+    row_ref    = data.get("row_ref")
+
+    if not (product and model and station and serial_num):
+        return jsonify({"ok": False, "error": "Missing product/model/station/serial_num."})
+    if not isinstance(row_ref, str) or not row_ref:
+        return jsonify({"ok": False, "error": "Missing or invalid station-log reference."}), 400
+
+    try:
+        row_reference = _station_log_serializer.loads(row_ref, max_age=1800)
+        if (
+            row_reference.get("product") != product
+            or row_reference.get("model") != model
+            or row_reference.get("station") != station
+            or row_reference.get("serial_num") != serial_num
+        ):
+            return jsonify({"ok": False, "error": "Station-log reference does not match this unit."}), 400
+        updated = station_log.update_remarks(
+            product,
+            model,
+            station,
+            serial_num,
+            remarks,
+            row_reference.get("row_locator"),
+        )
+        return jsonify({"ok": True, "updated": updated})
+    except BadSignature:
+        return jsonify({"ok": False, "error": "Station-log reference is invalid or expired."}), 400
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB error: {e}"})
+        
 @app.route("/api/endorsement/update", methods=["POST"])
 @require_group("FA")
 def update_endorsement_route():
@@ -175,6 +315,7 @@ def update_endorsement_route():
 
 # =================================================================================================failure_analysis
 @app.route("/api/failure_analysis/lookup/<serial_num>", methods=["GET"])
+@require_login
 def fa_lookup(serial_num):
     try:
         row = get_fa_by_serial(serial_num.strip())
@@ -190,12 +331,19 @@ def fa_lookup(serial_num):
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
 @app.route("/api/failure_analysis/options", methods=["GET"])
+@require_login
 def fa_options():
     try:
+        conn = get_fa_conn()
+        with conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT defect_cat FROM fa.fa_analysis WHERE defect_cat IS NOT NULL AND defect_cat != ''")
+            defect_rows = cur.fetchall()
+        conn.close()
+        defect_cat = [r.get("defect_cat") for r in defect_rows if r.get("defect_cat")]
         return jsonify({
             "ok": True,
             "proposed_action": get_distinct_values("proposed_action"),
-            "defect_cat": get_distinct_values("defect_cat"),
+            "defect_cat": defect_cat,
         })
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
@@ -239,6 +387,7 @@ def update_fa_route():
 
 # =================================================================================================rework
 @app.route("/api/rework/lookup/<serial_num>", methods=["GET"])
+@require_login
 def rework_lookup(serial_num):
     try:
         row = get_fa_by_serial(serial_num.strip())
@@ -253,6 +402,7 @@ def rework_lookup(serial_num):
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
 @app.route("/api/rework/options", methods=["GET"])
+@require_login
 def rework_options():
     try:
         return jsonify({"ok": True, "action_taken": get_distinct_values("action_taken")})
@@ -292,6 +442,7 @@ def update_rework_route():
 
 # =================================================================================================return
 @app.route("/api/return/lookup/<serial_num>", methods=["GET"])
+@require_login
 def return_lookup(serial_num):
     try:
         row = get_fa_by_serial(serial_num.strip())
@@ -332,6 +483,7 @@ def return_rework():
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
 @app.route("/api/change_password", methods=["POST"])
+@require_login
 def change_password():
     data    = request.get_json(silent=True)
     cur_b   = data.get("current_badge", "").strip()
@@ -359,23 +511,135 @@ def change_password():
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
-# ── FA Data ────────────────────────────────────────────────────────────────────
-@app.route("/api/data", methods=["GET"])
-def data():
+
+@app.route("/api/employees", methods=["GET"])
+@require_login
+def get_employees():
+    """Return all employee names for selection in admin settings."""
     try:
         conn = get_fa_conn()
         with conn.cursor() as cur:
             cur.execute(
-                """
+                "SELECT employee_num, employee_name, `group` FROM fa.userv2 WHERE employee_num IS NOT NULL ORDER BY employee_name, employee_num"
+            )
+            rows = cur.fetchall()
+        conn.close()
+        employees = [
+            {
+                "num": r.get("employee_num"),
+                "name": r.get("employee_name") or r.get("employee_num"),
+                "group": r.get("group") or "",
+            }
+            for r in rows
+        ]
+        return jsonify({"ok": True, "employees": employees})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB error: {e}"})
+
+
+@app.route("/api/create_user", methods=["POST"])
+@require_group("ADMIN")
+def create_user():
+    """Create a new FA/PROCESS/ADMIN user with a temporary password."""
+    data = request.get_json(silent=True) or {}
+    employee_num = (data.get("employee_num") or "").strip()
+    employee_name = (data.get("employee_name") or "").strip()
+    group = (data.get("group") or "").strip().upper()
+    temp_password = (data.get("temp_password") or "").strip()
+
+    if not employee_num or not employee_name or not temp_password:
+        return jsonify({"ok": False, "error": "Employee number, name, and temporary password are required."})
+    if group not in ("ADMIN", "FA", "PROCESS"):
+        return jsonify({"ok": False, "error": "Group must be ADMIN, FA, or PROCESS."})
+
+    try:
+        conn = get_fa_conn()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT employee_num FROM fa.userv2 WHERE employee_num = %s LIMIT 1",
+                (employee_num,),
+            )
+            if cur.fetchone():
+                conn.close()
+                return jsonify({"ok": False, "error": f"Employee number {employee_num} already exists."})
+
+            hashed_password = hash_badge(temp_password)
+            cur.execute(
+                "INSERT INTO fa.userv2 (employee_num, employee_name, badge, `group`) VALUES (%s, %s, %s, %s)",
+                (employee_num, employee_name, hashed_password, group),
+            )
+            conn.commit()
+        conn.close()
+        return jsonify({"ok": True, "employee_num": employee_num, "group": group})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB error: {e}"})
+
+# ── FA Data ────────────────────────────────────────────────────────────────────
+@app.route("/api/data", methods=["GET"])
+@require_login
+def data():
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+    date_effective = session.get("date_effective")  # None if not set for this user
+
+    cache_key = (date_from, date_to, date_effective)
+    now = time.time()
+    with _cache_lock:
+        cached_payload = (
+            _dashboard_data_cache["payload"]
+            if _dashboard_data_cache.get("key") == cache_key
+            and _dashboard_data_cache["payload"] is not None
+            and now < _dashboard_data_cache["expires_at"]
+            else None
+        )
+    if cached_payload is not None:
+        return jsonify(cached_payload)
+
+    if not date_from or not date_to:
+        return jsonify({"ok": False, "error": "Both date_from and date_to are required."}), 400
+    try:
+        start = datetime.strptime(date_from, "%Y-%m-%d")
+        end = datetime.strptime(date_to, "%Y-%m-%d")
+    except ValueError:
+        return jsonify({"ok": False, "error": "Dates must use YYYY-MM-DD."}), 400
+    if start > end:
+        return jsonify({"ok": False, "error": "date_from cannot be after date_to."}), 400
+    end += timedelta(days=1)
+
+    # Clamp the requested start to the user's effective date, if one is set.
+    # date_effective is stored as "%Y-%m-%d %H:%M:%S" — parse it fully,
+    # then compare as datetimes, not as mismatched strings.
+    if date_effective:
+        effective_start = datetime.strptime(date_effective, "%Y-%m-%d %H:%M:%S")
+        if start < effective_start:
+            start = effective_start
+
+    date_clause = """
+        WHERE fa_records.faendorse_datetime >= %s
+          AND fa_records.faendorse_datetime < %s
+          AND NOT EXISTS (
+              SELECT 1
+              FROM fa.fa_analysis AS hidden_dates
+              WHERE hidden_dates.hide_dates = DATE(fa_records.faendorse_datetime)
+          )
+    """
+    date_params = [start, end]
+
+    try:
+        conn = get_fa_conn()
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
                 SELECT fa_records.*, fa_links.url
-                FROM fa.main_copy AS fa_records
+                FROM fa.main AS fa_records
                 LEFT JOIN (
                     SELECT fa_case, MAX(link) AS url
                     FROM fa.url
                     GROUP BY fa_case
                 ) AS fa_links ON fa_links.fa_case = fa_records.fa_case
+                {date_clause}
                 ORDER BY fa_records.faendorse_datetime DESC
-                """
+                """, date_params
             )
             rows = cur.fetchall()
         conn.close()
@@ -385,9 +649,131 @@ def data():
                 k: (str(v) if v is not None and not isinstance(v, (int, float, str, bool)) else v)
                 for k, v in r.items()
             })
-        return jsonify({"ok": True, "rows": clean})
+        payload = {"ok": True, "rows": clean}
+        with _cache_lock:
+            _dashboard_data_cache["key"] = cache_key
+            _dashboard_data_cache["payload"] = payload
+            _dashboard_data_cache["expires_at"] = time.time() + 5
+        return jsonify(payload)
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
+
+@app.route("/api/data_dates", methods=["GET"])
+@require_login
+def data_dates():
+    """Return available FA endorsement dates without sending full records."""
+    date_effective = session.get("date_effective")
+    try:
+        conn = get_fa_conn()
+        with conn.cursor() as cur:
+            if date_effective:
+                cur.execute(
+                    """
+                    SELECT DISTINCT DATE(faendorse_datetime) AS fa_date
+                    FROM fa.main
+                    WHERE faendorse_datetime IS NOT NULL
+                      AND faendorse_datetime >= %s
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM fa.fa_analysis AS hidden_dates
+                          WHERE hidden_dates.hide_dates = DATE(fa.main.faendorse_datetime)
+                      )
+                    ORDER BY fa_date DESC
+                    """,
+                    (date_effective,)
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT DISTINCT DATE(faendorse_datetime) AS fa_date
+                    FROM fa.main
+                    WHERE faendorse_datetime IS NOT NULL
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM fa.fa_analysis AS hidden_dates
+                          WHERE hidden_dates.hide_dates = DATE(fa.main.faendorse_datetime)
+                      )
+                    ORDER BY fa_date DESC
+                    """
+                )
+            dates = [row["fa_date"].strftime("%Y-%m-%d") for row in cur.fetchall()]
+        conn.close()
+        return jsonify({"ok": True, "dates": dates})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB error: {e}"})
+
+@app.route("/api/run_units", methods=["GET"])
+@require_login
+def run_units():
+    """Count distinct production serials for a dashboard date/filter set."""
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+    product = request.args.get("product", "").strip() or None
+    model = request.args.get("model", "").strip() or None
+    station = request.args.get("station", "").strip() or None
+
+    if not date_from or not date_to:
+        return jsonify({"ok": True, "run_units": 0})
+    try:
+        start = datetime.strptime(date_from, "%Y-%m-%d")
+        end = datetime.strptime(date_to, "%Y-%m-%d")
+    except ValueError:
+        return jsonify({"ok": False, "error": "Dates must use YYYY-MM-DD."}), 400
+    if start > end:
+        return jsonify({"ok": False, "error": "date_from cannot be after date_to."}), 400
+    end += timedelta(days=1)
+    cache_key = (date_from, date_to, product, model, station)
+    refresh_job = None
+    now = time.time()
+    with _cache_lock:
+        expired_keys = [
+            key for key, existing_job in _run_units_jobs.items()
+            if not existing_job["refreshing"]
+            and now - existing_job["updated_at"] >= _RUN_UNITS_JOB_TTL
+        ]
+        for key in expired_keys:
+            _run_units_jobs.pop(key, None)
+
+        job = _run_units_jobs.get(cache_key)
+        if job is None:
+            while len(_run_units_jobs) >= _MAX_RUN_UNITS_JOBS:
+                oldest_key = next(iter(_run_units_jobs))
+                oldest_job = _run_units_jobs.pop(oldest_key)
+                if oldest_job.get("future") is not None:
+                    oldest_job["future"].cancel()
+            job = {
+                "value": None,
+                "refreshing": False,
+                "updated_at": 0,
+                "future": None,
+            }
+            _run_units_jobs[cache_key] = job
+
+        if not job["refreshing"] and now - job["updated_at"] >= 15:
+            job["refreshing"] = True
+            refresh_job = job
+
+            def refresh_run_units():
+                try:
+                    value = active_projects.count_run_units(start, end, product, model, station)
+                    with _cache_lock:
+                        refresh_job["value"] = value
+                        refresh_job["updated_at"] = time.time()
+                except Exception as exc:
+                    print(f"[RunUnits] background refresh failed: {exc}")
+                finally:
+                    with _cache_lock:
+                        refresh_job["refreshing"] = False
+
+            refresh_job["future"] = _run_units_executor.submit(refresh_run_units)
+
+        response_value = job["value"]
+        response_refreshing = job["refreshing"]
+    return jsonify({
+        "ok": True,
+        "run_units": response_value,
+        "refreshing": response_refreshing,
+    })
     
 def _clean_rows(rows):
     return [
@@ -397,26 +783,193 @@ def _clean_rows(rows):
     ]
 
 @app.route("/api/open_farepaire_status", methods=["GET"])
+@require_login
 def get_open_fa():
     conn = get_fa_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT serial_num, product, model, po_num, station, test_failure, pro_endorser, faendorse_datetime FROM fa.main_copy WHERE farepair_status IN (1) ORDER BY faendorse_datetime DESC"
+                "SELECT serial_num, product, model, po_num, station, test_failure, pro_endorser, faendorse_datetime FROM fa.main WHERE farepair_status IN (1) ORDER BY faendorse_datetime DESC"
             )
             rows = cur.fetchall()
         conn.close()
-        return jsonify({"ok":True, "rows":_clean_rows(rows)})
+        return jsonify({"ok": True, "rows": _clean_rows(rows)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB error: {e}"})
+
+
+@app.route("/api/hide_dates", methods=["GET"])
+@require_login
+def get_hide_dates():
+    """Fetch all hidden dates from fa.fa_analysis table."""
+    try:
+        conn = get_fa_conn()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT hide_dates, authorized_person FROM fa.fa_analysis WHERE hide_dates IS NOT NULL"
+            )
+            rows = cur.fetchall()
+        conn.close()
+        hide_dates = []
+        for row in rows:
+            date_value = normalize_hide_date(row.get("hide_dates"))
+            if date_value:
+                hide_dates.append({
+                    "dates": date_value,
+                    "authorized_person": row.get("authorized_person", ""),
+                })
+        return jsonify({"ok": True, "hide_dates": hide_dates})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB error: {e}"})
+
+
+@app.route("/api/authorized_persons", methods=["GET"])
+@require_login
+def get_authorized_persons():
+    """Fetch all employee names to choose from for hide-date authorization."""
+    try:
+        conn = get_fa_conn()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT employee_num, employee_name FROM fa.userv2 WHERE employee_num IS NOT NULL ORDER BY employee_name, employee_num"
+            )
+            rows = cur.fetchall()
+        conn.close()
+        persons = [
+            {"num": r["employee_num"], "name": r.get("employee_name", r["employee_num"])}
+            for r in rows
+        ]
+        return jsonify({"ok": True, "persons": persons})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB error: {e}"})
+
+@app.route("/api/settings_access", methods=["GET"])
+@require_login
+def settings_access():
+    """Return whether the signed-in user may manage dashboard hide dates."""
+    employee_num = session.get("employee_num")
+    if not employee_num:
+        return jsonify({"ok": True, "allowed": False})
+    if (session.get("group") or "").upper() == "ADMIN":
+        return jsonify({"ok": True, "allowed": True})
+
+    try:
+        conn = get_fa_conn()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM fa.fa_analysis
+                WHERE authorized_person = %s
+                LIMIT 1
+                """,
+                (employee_num,),
+            )
+            allowed = cur.fetchone() is not None
+        conn.close()
+        return jsonify({"ok": True, "allowed": allowed})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB error: {e}"})
+
+@app.route("/api/authorized_person_save", methods=["POST"])
+@require_group("ADMIN")
+def save_authorized_person():
+    """Record an employee as authorized to manage dashboard settings."""
+    data = request.get_json(silent=True) or {}
+    authorized_person = str(data.get("authorized_person") or "").strip()
+    if not authorized_person:
+        return jsonify({"ok": False, "error": "Please select an authorized person."})
+
+    try:
+        conn = get_fa_conn()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT employee_num FROM fa.userv2 WHERE employee_num = %s LIMIT 1",
+                (authorized_person,),
+            )
+            if cur.fetchone() is None:
+                return jsonify({"ok": False, "error": "Employee was not found."})
+            cur.execute(
+                "SELECT 1 FROM fa.fa_analysis WHERE authorized_person = %s LIMIT 1",
+                (authorized_person,),
+            )
+            if cur.fetchone() is None:
+                cur.execute(
+                    "INSERT INTO fa.fa_analysis (authorized_person) VALUES (%s)",
+                    (authorized_person,),
+                )
+            conn.commit()
+        conn.close()
+        return jsonify({"ok": True, "authorized_person": authorized_person})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB error: {e}"})
+
+
+@app.route("/api/hide_dates_save", methods=["POST"])
+@require_group("FA", "PROCESS")
+def save_hide_dates():
+    """Append missing hidden-date rows for one authorized person."""
+    data = request.get_json(silent=True) or {}
+    hide_dates_str = str(data.get("hide_dates") or "").strip()
+    authorized_person = str(data.get("authorized_person") or "").strip() or session.get("employee_num")
+    raw_hide_dates = [date.strip() for date in hide_dates_str.split(",") if date.strip()]
+    hide_dates = []
+
+    for date in raw_hide_dates:
+        normalized_date = normalize_hide_date(date)
+        if not normalized_date:
+            return jsonify({"ok": False, "error": f"Invalid hide date: {date}"})
+        hide_dates.append(normalized_date)
+
+    if not session.get("employee_num"):
+        return jsonify({"ok": False, "error": "Not logged in."}), 401
+    is_admin = (session.get("group") or "").upper() == "ADMIN"
+    if not is_admin and authorized_person != session.get("employee_num"):
+        return jsonify({"ok": False, "error": "You are not authorized to update these settings."}), 403
+
+    try:
+        conn = get_fa_conn()
+        with conn.cursor() as cur:
+            if not is_admin:
+                cur.execute(
+                    "SELECT 1 FROM fa.fa_analysis WHERE authorized_person = %s LIMIT 1",
+                    (session.get("employee_num"),),
+                )
+                if cur.fetchone() is None:
+                    conn.close()
+                    return jsonify({"ok": False, "error": "You are not authorized to update these settings."}), 403
+            for hide_date in hide_dates:
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM fa.fa_analysis
+                    WHERE hide_dates = %s AND authorized_person = %s
+                    LIMIT 1
+                    """,
+                    (hide_date, authorized_person),
+                )
+                if cur.fetchone() is None:
+                    cur.execute(
+                        """
+                        INSERT INTO fa.fa_analysis (hide_dates, authorized_person)
+                        VALUES (%s, %s)
+                        """,
+                        (hide_date, authorized_person)
+                    )
+            conn.commit()
+        conn.close()
+        return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
 @app.route("/api/wip_farepair_status", methods=["GET"])
+@require_login
 def get_wip_fa():
     conn = get_fa_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT * FROM fa.main_copy WHERE farepair_status IN (2) ORDER BY faendorse_datetime DESC"
+                "SELECT * FROM fa.main WHERE farepair_status IN (2) ORDER BY faendorse_datetime DESC"
             )
             rows = cur.fetchall()
         conn.close()
@@ -425,12 +978,13 @@ def get_wip_fa():
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
 @app.route("/api/closed_farepair_status", methods=["GET"])
+@require_login
 def get_close_fa():
     conn = get_fa_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT * FROM fa.main_copy WHERE farepair_status IN (4) ORDER BY faendorse_datetime DESC"
+                "SELECT * FROM fa.main WHERE farepair_status IN (4) ORDER BY faendorse_datetime DESC"
             )
             rows = cur.fetchall()
         conn.close()

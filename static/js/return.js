@@ -120,8 +120,8 @@ document.getElementById('btn-return-submit').addEventListener('click', async () 
   });
   const json = await res.json();
   if (json.ok) {
-    closeReturnModal();
     if (typeof loadAndRender === 'function') loadAndRender();
+    resetReturnForm();
   } else {
     err.textContent = json.error || 'Failed to return unit.';
   }

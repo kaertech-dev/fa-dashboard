@@ -153,8 +153,8 @@ document.getElementById('btn-fa-submit').addEventListener('click', async () => {
   });
   const json = await res.json();
   if (json.ok) {
-    closeFaModal();
     if (typeof loadAndRender === 'function') loadAndRender(); // refresh table/charts
+    resetFaForm();
   } else {
     err.textContent = json.error || 'Failed to update failure analysis.';
   }
