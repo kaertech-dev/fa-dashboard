@@ -33,27 +33,27 @@ function isEndorsementStationEditable() {
   const group = (localStorage.getItem('fa_group') || '').toUpperCase();
   return group === 'FA' || group === 'ADMIN';
 }
-// function resetEndorsementForm() {
-//   document.getElementById('endorsement-error').textContent = '';
-//   document.getElementById('endorsement-serial').value = '';
-//   document.getElementById('endorsement-station').value = '';
-//   document.getElementById('endorsement-station-list').innerHTML = '';
-//   document.getElementById('endorsement-failure-mode').value = '';
-//   document.getElementById('endorsement-po').value = '';
-//   document.getElementById('endorsement-text-display').textContent =
-//     'Please enter the employee number of the endorser.';
+function resetEndorsementForm() {
+  document.getElementById('endorsement-error').textContent = '';
+  document.getElementById('endorsement-serial').value = '';
+  document.getElementById('endorsement-station').value = '';
+  document.getElementById('endorsement-station-list').innerHTML = '';
+  document.getElementById('endorsement-failure-mode').value = '';
+  document.getElementById('endorsement-po').value = '';
+  document.getElementById('endorsement-text-display').textContent =
+    'Please enter the employee number of the endorser.';
 
-//   endorsementRemarksNeedsWriteback = false;
-//   endorsementStationLogRef = null;
+  endorsementRemarksNeedsWriteback = false;
+  endorsementStationLogRef = null;
 
-//   const endorserInput = document.getElementById('endorsement-endorser');
-//   endorserInput.value = localStorage.getItem('fa_user_num') || '';
-//   endorserInput.readOnly = true;
+  const endorserInput = document.getElementById('endorsement-endorser');
+  endorserInput.value = localStorage.getItem('fa_user_num') || '';
+  endorserInput.readOnly = true;
 
-//   setEndorsementOfflineMode(false);
-//   resetEndorsementSelect('endorsement-product', 'Auto Shown Product', true);
-//   resetEndorsementSelect('endorsement-model', 'Auto shown model…', true);
-// }
+  setEndorsementOfflineMode(false);
+  resetEndorsementSelect('endorsement-product', 'Auto Shown Product', true);
+  resetEndorsementSelect('endorsement-model', 'Auto shown model…', true);
+}
 
 function setEndorsementOfflineMode(isOffline) {
   const productSelect = document.getElementById('endorsement-product');
@@ -99,7 +99,7 @@ function resetEndorsementSelect(id, placeholder, disabled) {
 
 async function openEndorsementModal() {
   document.getElementById('user-menu-dropdown').classList.remove('open');
-  // resetEndorsementForm();
+  resetEndorsementForm();
   document.getElementById('modal-endorsement').style.display = 'flex';
   await loadEndorsementProducts();
   document.getElementById('endorsement-serial').focus();
@@ -401,7 +401,7 @@ document.getElementById('btn-endorsement-submit').addEventListener('click', asyn
 
     // Modal intentionally stays open — the operator can scan straight into
     // the next unit. Only ✕ / Exit close it now.
-    // resetEndorsementForm();
+    resetEndorsementForm();
     document.getElementById('endorsement-text-display').textContent =
       `✓ Serial ${serial} endorsed to FA successfully.\n\nScan the next serial number, or click ✕ / Exit to close this window.`;
     document.getElementById('endorsement-serial').focus();

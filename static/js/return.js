@@ -10,18 +10,18 @@ function closeReturnModal() {
   document.getElementById('modal-return').style.display = 'none';
 }
 
-// function resetReturnForm() {
-//   document.getElementById('return-error').textContent = '';
-//   document.getElementById('return-serial').value = '';
-//   document.getElementById('return-datetime').value = '';
-//   document.getElementById('return-text-display').textContent = RETURN_DEFAULT_MSG;
-//   document.getElementById('return-pic').value = '';
-//   document.getElementById('return-pic').readOnly = true;
-// }
+function resetReturnForm() {
+  document.getElementById('return-error').textContent = '';
+  document.getElementById('return-serial').value = '';
+  document.getElementById('return-datetime').value = '';
+  document.getElementById('return-text-display').textContent = RETURN_DEFAULT_MSG;
+  document.getElementById('return-pic').value = '';
+  document.getElementById('return-pic').readOnly = true;
+}
 
 function openReturnModal() {
   document.getElementById('user-menu-dropdown').classList.remove('open');
-  // resetReturnForm();
+  resetReturnForm();
   document.getElementById('modal-return').style.display = 'flex';
   document.getElementById('return-serial').focus();
 }
@@ -121,7 +121,7 @@ document.getElementById('btn-return-submit').addEventListener('click', async () 
   const json = await res.json();
   if (json.ok) {
     if (typeof loadAndRender === 'function') loadAndRender();
-    // resetReturnForm();
+    resetReturnForm();
   } else {
     err.textContent = json.error || 'Failed to return unit.';
   }

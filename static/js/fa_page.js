@@ -16,21 +16,21 @@ function closeFaModal() {
   document.getElementById('modal-fa').style.display = 'none';
 }
 
-// function resetFaForm() {
-//   document.getElementById('fa-error').textContent = '';
-//   document.getElementById('fa-serial').value = '';
-//   document.getElementById('fa-datetime').value = '';
-//   document.getElementById('fa-text-display').textContent = 'Scan a serial number to load UUT details…';
-//   document.getElementById('fa-document-url').value = '';
-//   FAPAGE_TEXT_FIELDS.forEach(id => document.getElementById(id).value = '');
-//   FAPAGE_SELECT_FIELDS.forEach(id => document.getElementById(id).value = '');
-//   document.getElementById('fa-pic').value = '';
-//   document.getElementById('fa-pic').readOnly = true;
-// }
+function resetFaForm() {
+  document.getElementById('fa-error').textContent = '';
+  document.getElementById('fa-serial').value = '';
+  document.getElementById('fa-datetime').value = '';
+  document.getElementById('fa-text-display').textContent = 'Scan a serial number to load UUT details…';
+  document.getElementById('fa-document-url').value = '';
+  FAPAGE_TEXT_FIELDS.forEach(id => document.getElementById(id).value = '');
+  FAPAGE_SELECT_FIELDS.forEach(id => document.getElementById(id).value = '');
+  document.getElementById('fa-pic').value = '';
+  document.getElementById('fa-pic').readOnly = true;
+}
 
 async function openFaModal() {
   document.getElementById('user-menu-dropdown').classList.remove('open');
-  // resetFaForm();
+  resetFaForm();
   document.getElementById('modal-fa').style.display = 'flex';
   await loadFaOptions();
   document.getElementById('fa-serial').focus();
@@ -154,7 +154,12 @@ document.getElementById('btn-fa-submit').addEventListener('click', async () => {
   const json = await res.json();
   if (json.ok) {
     if (typeof loadAndRender === 'function') loadAndRender(); // refresh table/charts
-    // resetFaForm();
+    document.getElementById('fa-serial').value = '';
+    document.getElementById('fa-datetime').value = '';
+    document.getElementById('fa-document-url').value = '';
+    document.getElementById('fa-text-display').textContent =
+      'Scan a serial number to load UUT details…';
+    document.getElementById('fa-serial').focus();
   } else {
     err.textContent = json.error || 'Failed to update failure analysis.';
   }

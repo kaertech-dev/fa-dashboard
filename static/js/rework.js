@@ -10,19 +10,19 @@ function closeReworkModal() {
   document.getElementById('modal-rework').style.display = 'none';
 }
 
-// function resetReworkForm() {
-//   document.getElementById('rework-error').textContent = '';
-//   document.getElementById('rework-serial').value = '';
-//   document.getElementById('rework-datetime').value = '';
-//   document.getElementById('rework-text-display').textContent = REWORK_DEFAULT_MSG;
-//   document.getElementById('rework-action-taken').value = '';
-//   document.getElementById('rework-pic').value = '';
-//   document.getElementById('rework-pic').readOnly = true;
-// }
+function resetReworkForm() {
+  document.getElementById('rework-error').textContent = '';
+  document.getElementById('rework-serial').value = '';
+  document.getElementById('rework-datetime').value = '';
+  document.getElementById('rework-text-display').textContent = REWORK_DEFAULT_MSG;
+  document.getElementById('rework-action-taken').value = '';
+  document.getElementById('rework-pic').value = '';
+  document.getElementById('rework-pic').readOnly = true;
+}
 
 async function openReworkModal() {
   document.getElementById('user-menu-dropdown').classList.remove('open');
-  // resetReworkForm();
+  resetReworkForm();
   document.getElementById('modal-rework').style.display = 'flex';
   await loadReworkOptions();
   document.getElementById('rework-serial').focus();
@@ -141,7 +141,7 @@ document.getElementById('btn-rework-submit').addEventListener('click', async () 
   const json = await res.json();
   if (json.ok) {
     if (typeof loadAndRender === 'function') loadAndRender();
-    // resetReworkForm();
+    resetReworkForm();
   } else {
     err.textContent = json.error || 'Failed to update repair status.';
   }
