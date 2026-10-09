@@ -154,7 +154,12 @@ document.getElementById('btn-fa-submit').addEventListener('click', async () => {
   const json = await res.json();
   if (json.ok) {
     if (typeof loadAndRender === 'function') loadAndRender(); // refresh table/charts
-    resetFaForm();
+    document.getElementById('fa-serial').value = '';
+    document.getElementById('fa-datetime').value = '';
+    document.getElementById('fa-document-url').value = '';
+    document.getElementById('fa-text-display').textContent =
+      'Scan a serial number to load UUT details…';
+    document.getElementById('fa-serial').focus();
   } else {
     err.textContent = json.error || 'Failed to update failure analysis.';
   }

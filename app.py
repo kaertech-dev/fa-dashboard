@@ -5,7 +5,6 @@ import gzip
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
-from io import BytesIO
 from flask import Flask, request, jsonify, render_template, session, redirect
 from functions import (
     get_fa_conn, authenticate, hash_badge,

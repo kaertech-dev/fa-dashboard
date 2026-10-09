@@ -10,10 +10,8 @@ from database import projects_engine
 
 INDEX_NAME = "idx_run_units_date_serial"
 
-
 def quote_identifier(value):
     return "`" + value.replace("`", "``") + "`"
-
 
 def main():
     projects = ActiveProjects()
@@ -86,7 +84,6 @@ def main():
                         print(f"failed {product_id}.{table}: {exc}")
 
     print(f"checked={checked} created={created} skipped={skipped} failed={failed}")
-
 
 if __name__ == "__main__":
     main()
