@@ -49,7 +49,7 @@ async function scanReturnSerial() {
   if (!serial) return;
 
   try {
-    const res  = await fetch('/api/return/lookup/' + encodeURIComponent(serial));
+    const res  = await fetch(APP_ROOT + '/api/return/lookup/' + encodeURIComponent(serial));
     const json = await res.json();
     if (!json.ok) {
       document.getElementById('return-text-display').textContent = 'Serial number not found.';
@@ -113,7 +113,7 @@ document.getElementById('btn-return-submit').addEventListener('click', async () 
 
   const payload = { serial_num: serial, returner: returner };
 
-  const res  = await fetch('/api/return/update', {
+  const res  = await fetch(APP_ROOT + '/api/return/update', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)

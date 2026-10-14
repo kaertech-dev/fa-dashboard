@@ -30,7 +30,7 @@ async function openReworkModal() {
 
 async function loadReworkOptions() {
   try {
-    const res  = await fetch('/api/rework/options');
+    const res  = await fetch(APP_ROOT + '/api/rework/options');
     const json = await res.json();
     if (json.ok) fillReworkSelect('rework-action-taken', json.action_taken);
   } catch (e) {
@@ -72,7 +72,7 @@ async function scanReworkSerial() {
   if (!serial) return;
 
   try {
-    const res  = await fetch('/api/rework/lookup/' + encodeURIComponent(serial));
+    const res  = await fetch(APP_ROOT + '/api/rework/lookup/' + encodeURIComponent(serial));
     const json = await res.json();
     if (!json.ok) {
       document.getElementById('rework-text-display').textContent = 'Serial number not found.';
@@ -133,7 +133,7 @@ document.getElementById('btn-rework-submit').addEventListener('click', async () 
 
   const payload = { serial_num: serial, reworker: reworker, action_taken: actionTaken };
 
-  const res  = await fetch('/api/rework/update', {
+  const res  = await fetch(APP_ROOT + '/api/rework/update', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)

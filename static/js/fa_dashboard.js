@@ -121,7 +121,7 @@ function getHolidaysAndMeetings() {
 
 async function loadHideDatesFromDB() {
   try {
-    const res = await fetch('/api/hide_dates');
+    const res = await fetch(APP_ROOT + '/api/hide_dates');
     const json = await res.json();
     if (json.ok && json.hide_dates) {
       dbHideDates = json.hide_dates;
@@ -202,7 +202,7 @@ async function doLogin() {
 
   loader(true);
   try {
-    const res = await fetch('/api/login', {
+    const res = await fetch(APP_ROOT + '/api/login', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -246,7 +246,7 @@ document.getElementById('btn-logout').addEventListener('click', async () => {
   stopAutoRefresh();
   let logoutError = null;
   try {
-    const response = await fetch('/api/logout', { method: 'POST' });
+    const response = await fetch(APP_ROOT + '/api/logout', { method: 'POST' });
     if (!response.ok) throw new Error(`Server returned HTTP ${response.status}`);
   } catch (error) {
     logoutError = error;
@@ -272,7 +272,7 @@ document.getElementById('btn-logout').addEventListener('click', async () => {
 // ── RESTORE LOGIN AFTER PAGE REFRESH ─────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
   try {
-    const response = await fetch('/api/me', { cache: 'no-store' });
+    const response = await fetch(APP_ROOT + '/api/me', { cache: 'no-store' });
     if (response.status === 401) {
       stopAutoRefresh();
       allData = [];
@@ -360,7 +360,7 @@ function renderSettingsModal() {
 
 async function loadAuthorizedPersons() {
   try {
-    const res = await fetch('/api/authorized_persons');
+    const res = await fetch(APP_ROOT + '/api/authorized_persons');
     const json = await res.json();
     if (json.ok && json.persons) {
       const select = document.getElementById('settings-auth-person-dropdown');
@@ -381,7 +381,7 @@ async function loadAuthorizedPersons() {
 
 async function loadSettingsAccess() {
   try {
-    const res = await fetch('/api/settings_access');
+    const res = await fetch(APP_ROOT + '/api/settings_access');
     const json = await res.json();
     settingsAccess = Boolean(json.ok && json.allowed);
   } catch (e) {
@@ -418,7 +418,7 @@ async function saveHideDatesToDB(changedAuthorizedPerson = null) {
       : dbHideDates;
     for (const item of items) {
       const authPerson = item.authorized_person || localStorage.getItem('fa_user_num');
-      const res = await fetch('/api/hide_dates_save', {
+      const res = await fetch(APP_ROOT + '/api/hide_dates_save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -453,7 +453,7 @@ document.getElementById('btn-settings-authorized-submit').addEventListener('clic
   }
 
   try {
-    const res = await fetch('/api/authorized_person_save', {
+    const res = await fetch(APP_ROOT + '/api/authorized_person_save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ authorized_person: authorizedPerson })
@@ -488,7 +488,7 @@ document.getElementById('btn-create-user').addEventListener('click', async () =>
   }
 
   try {
-    const res = await fetch('/api/create_user', {
+    const res = await fetch(APP_ROOT + '/api/create_user', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -601,7 +601,7 @@ document.getElementById('btn-chpass-submit').addEventListener('click', async () 
   }
 
   try {
-    const res = await fetch('/api/change_password', {
+    const res = await fetch(APP_ROOT + '/api/change_password', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -672,7 +672,7 @@ async function loadAndRender() {
   try {
     await loadHideDatesFromDB();
 
-    const datesRes = await fetch('/api/data_dates');
+    const datesRes = await fetch(APP_ROOT + '/api/data_dates');
     const datesJson = await datesRes.json();
     if (!datesJson.ok) throw new Error(datesJson.error || 'Failed to load available dates.');
     availableDashboardDates = Array.isArray(datesJson.dates) ? datesJson.dates : [];
@@ -768,8 +768,7 @@ async function fetchDataForSelectedDates() {
     return { ok: true, json: async () => ({ ok: true, rows: [] }) };
   }
 
-  const res = await fetch(
-    `/api/data?date_from=${encodeURIComponent(from)}&date_to=${encodeURIComponent(to)}`,
+  const res = await fetch(`${APP_ROOT}/api/data?date_from=${encodeURIComponent(from)}&date_to=${encodeURIComponent(to)}`,
     { cache: 'no-store' }
   );
   if (requestId !== dataRequestId) {
@@ -1086,7 +1085,7 @@ async function updateRunUnitsKpi() {
   if (runUnitsController) runUnitsController.abort();
   runUnitsController = new AbortController();
   try {
-    const res = await fetch(`/api/run_units?${params.toString()}`, {
+    const res = await fetch(`${APP_ROOT}/api/run_units?${params.toString()}`, {
       signal: runUnitsController.signal
     });
     const json = await res.json();
