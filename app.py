@@ -5,7 +5,8 @@ import gzip
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
-from flask import Flask, request, jsonify, render_template, session, redirect
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for
+from werkzeug.middleware.proxy_fix import ProxyFix
 from functions import (
     get_fa_conn, authenticate, hash_badge,
     get_fa_by_serial, get_fa_url, save_fa_url, get_distinct_values, update_fa, update_rework,
@@ -16,7 +17,10 @@ from datetime import datetime, timedelta
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 app = Flask(__name__)
+# Behind kts-proxy the app is served under a path prefix (X-Forwarded-Prefix).
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 app.secret_key = os.environ["SECRET_KEY"]
+app.config["SESSION_COOKIE_NAME"] = "fa_session"
 _station_log_serializer = URLSafeTimedSerializer(
     app.secret_key,
     salt="fa-station-log-writeback",
@@ -86,7 +90,7 @@ def require_login(fn):
 
 @app.route("/")
 def root_redirect():
-    return redirect("/fa_traceability", code=302)
+    return redirect(url_for("index"), code=302)
 
 @app.route('/fa_traceability')
 def index():

@@ -38,7 +38,7 @@ async function openFaModal() {
 
 async function loadFaOptions() {
   try {
-    const res  = await fetch('/api/failure_analysis/options');
+    const res  = await fetch(APP_ROOT + '/api/failure_analysis/options');
     const json = await res.json();
     if (json.ok) {
       fillFaSelect('fa-defect-cat', json.defect_cat);
@@ -83,7 +83,7 @@ async function scanFaSerial() {
   if (!serial) return;
 
   try {
-    const res  = await fetch('/api/failure_analysis/lookup/' + encodeURIComponent(serial));
+    const res  = await fetch(APP_ROOT + '/api/failure_analysis/lookup/' + encodeURIComponent(serial));
     const json = await res.json();
     if (!json.ok) {
       document.getElementById('fa-text-display').textContent = 'Serial number not found.';
@@ -146,7 +146,7 @@ document.getElementById('btn-fa-submit').addEventListener('click', async () => {
     document_url:    document.getElementById('fa-document-url').value.trim(),
   };
 
-  const res  = await fetch('/api/failure_analysis/update', {
+  const res  = await fetch(APP_ROOT + '/api/failure_analysis/update', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)

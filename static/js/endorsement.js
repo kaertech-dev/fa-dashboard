@@ -108,7 +108,7 @@ async function openEndorsementModal() {
 // ── CASCADING PRODUCT → MODEL, + STATION SUGGESTIONS ──────────────────────────
 async function loadEndorsementProducts() {
   try {
-    const res  = await fetch('/api/endorsement/products');
+    const res  = await fetch(APP_ROOT + '/api/endorsement/products');
     const json = await res.json();
     if (json.ok) fillEndorsementSelect('endorsement-product', json.products);
   } catch (e) {
@@ -119,7 +119,7 @@ async function loadEndorsementProducts() {
 async function loadEndorsementModels(productId) {
   resetEndorsementSelect('endorsement-model', 'Loading…', true);
   try {
-    const res  = await fetch('/api/endorsement/models?product=' + encodeURIComponent(productId));
+    const res  = await fetch(APP_ROOT + '/api/endorsement/models?product=' + encodeURIComponent(productId));
     const json = await res.json();
     resetEndorsementSelect('endorsement-model', 'Select…', true);
     if (json.ok) fillEndorsementSelect('endorsement-model', json.models);
@@ -134,8 +134,7 @@ async function loadEndorsementStationSuggestions(productId, modelId) {
   datalist.innerHTML = '';
   if (!productId || !modelId) return;
   try {
-    const res  = await fetch(
-      '/api/endorsement/stations?product=' + encodeURIComponent(productId) +
+    const res  = await fetch(APP_ROOT + '/api/endorsement/stations?product=' + encodeURIComponent(productId) +
       '&model=' + encodeURIComponent(modelId)
     );
     const json = await res.json();
@@ -224,7 +223,7 @@ async function scanEndorsementSerial() {
   if (!serial) return;
 
   try {
-    const res  = await fetch('/api/endorsement/lookup/' + encodeURIComponent(serial));
+    const res  = await fetch(APP_ROOT + '/api/endorsement/lookup/' + encodeURIComponent(serial));
     const json = await res.json();
     if (!json.ok) {
       err.textContent = json.error || 'Could not look up serial number.';
@@ -264,7 +263,7 @@ You can review/update the details (Station is editable) and endorse again.`;
 
     document.getElementById('endorsement-text-display').textContent = 'Searching station logs…';
 
-    const logRes  = await fetch('/api/endorsement/station_log/' + encodeURIComponent(serial));
+    const logRes  = await fetch(APP_ROOT + '/api/endorsement/station_log/' + encodeURIComponent(serial));
     const logJson = await logRes.json();
 
     if (!logJson.ok) {
@@ -364,7 +363,7 @@ document.getElementById('btn-endorsement-submit').addEventListener('click', asyn
     prod_endorser: endorser,
   };
 
-  const res  = await fetch('/api/endorsement/update', {
+  const res  = await fetch(APP_ROOT + '/api/endorsement/update', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -376,7 +375,7 @@ document.getElementById('btn-endorsement-submit').addEventListener('click', asyn
       // Best-effort: the FA record was already saved successfully above,
       // so a failure here shouldn't block or roll back that success.
       try {
-        const remarksRes  = await fetch('/api/endorsement/update_remarks', {
+        const remarksRes  = await fetch(APP_ROOT + '/api/endorsement/update_remarks', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
