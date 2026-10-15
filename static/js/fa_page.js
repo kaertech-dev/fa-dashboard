@@ -11,14 +11,15 @@ document.getElementById('btn-fa-exit').addEventListener('click', closeFaModal);
 // forward (including against rework.js / return.js).
 const FAPAGE_TEXT_FIELDS   = ['fa-failure-cause', 'fa-affected-comp', 'fa-proposed-action'];
 const FAPAGE_SELECT_FIELDS = ['fa-defect-cat', 'fa-class'];
-let faFieldsRetainedAfterSave = false;
+let faRetainedValues = null;
 
 function closeFaModal() {
   document.getElementById('modal-fa').style.display = 'none';
 }
 
 function resetFaForm() {
-  faFieldsRetainedAfterSave = false;
+  faRetainedValues = null;
+  document.getElementById('fa-retained-note').hidden = true;
   document.getElementById('fa-error').textContent = '';
   document.getElementById('fa-serial').value = '';
   document.getElementById('fa-datetime').value = '';
@@ -108,14 +109,31 @@ async function scanFaSerial() {
     Endorsed By: ${r.prod_endorser || '–'}
     Endorsement Date & Time: ${formatDate(r.faendorse_datetime)}`;
 
-    if (!faFieldsRetainedAfterSave) {
-      document.getElementById('fa-failure-cause').value = r.failure_cause || '';
-      document.getElementById('fa-affected-comp').value = r.affected_comp || '';
-      document.getElementById('fa-pic').value = r.fa_pic || '';
-      document.getElementById('fa-proposed-action').value = r.proposed_action || '';
-      ensureOption('fa-defect-cat', r.defect_cat);
-      document.getElementById('fa-class').value = r.fa_class ? String(r.fa_class) : '';
-    }
+    const faFields = [
+      { id: 'fa-failure-cause', label: 'cause of failure', value: r.failure_cause },
+      { id: 'fa-affected-comp', label: 'affected component', value: r.affected_comp },
+      { id: 'fa-pic', label: 'FA PIC', value: r.fa_pic },
+      { id: 'fa-proposed-action', label: 'proposed action', value: r.proposed_action },
+      { id: 'fa-defect-cat', label: 'defect category', value: r.defect_cat },
+      { id: 'fa-class', label: 'FA class', value: r.fa_class },
+    ];
+    const retainedLabels = [];
+    faFields.forEach(field => {
+      const savedValue = field.value == null ? '' : String(field.value).trim();
+      const retainedValue = faRetainedValues && faRetainedValues[field.id]
+        ? String(faRetainedValues[field.id]).trim()
+        : '';
+      const useRetainedValue = !savedValue && Boolean(retainedValue);
+      const value = savedValue || retainedValue;
+      if (field.id === 'fa-defect-cat') ensureOption(field.id, value);
+      document.getElementById(field.id).value = value;
+      if (useRetainedValue) retainedLabels.push(field.label);
+    });
+    const retainedNote = document.getElementById('fa-retained-note');
+    retainedNote.hidden = retainedLabels.length === 0;
+    retainedNote.textContent = retainedLabels.length
+      ? `Using previous saved values for ${retainedLabels.join(', ')} because this serial has no saved value for those fields. Verify before submitting.`
+      : '';
   } catch (e) {
     err.textContent = 'Could not reach server: ' + e.message;
   }
@@ -157,7 +175,14 @@ document.getElementById('btn-fa-submit').addEventListener('click', async () => {
   const json = await res.json();
   if (json.ok) {
     if (typeof loadAndRender === 'function') loadAndRender(); // refresh table/charts
-    faFieldsRetainedAfterSave = true;
+    faRetainedValues = {
+      'fa-failure-cause': payload.failure_cause,
+      'fa-affected-comp': payload.affected_comp,
+      'fa-pic': payload.fa_pic,
+      'fa-proposed-action': payload.proposed_action,
+      'fa-defect-cat': payload.defect_cat,
+      'fa-class': payload.fa_class,
+    };
     document.getElementById('fa-serial').value = '';
     document.getElementById('fa-datetime').value = '';
     document.getElementById('fa-document-url').value = '';

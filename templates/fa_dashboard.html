@@ -342,6 +342,10 @@
       <textarea id="endorsement-failure-mode" rows="3" placeholder="Describe the test failure" required
         style="width:100%;resize:vertical;font-family:inherit;font-size:.85rem;padding:8px 10px;
         border-radius:6px;border:1px solid var(--border,#d1d5db);box-sizing:border-box"></textarea>
+      <div id="endorsement-failure-mode-retained-note" role="status" aria-live="polite" hidden
+        style="color:#92400e;background:#fef3c7;padding:6px 8px;margin-top:6px;border-radius:6px">
+        This failure mode is carried over from the previous unit because this serial has no saved value. Verify before submitting.
+      </div>
     </div>
 
     <div class="field">
@@ -388,6 +392,9 @@
         font-family:Consolas,monospace;font-size:.8rem;border-radius:6px;padding:10px 12px;
         min-height:120px;white-space:pre-wrap;margin:0">Scan a serial number to load UUT details…</pre>
     </div>
+
+    <div id="fa-retained-note" role="status" aria-live="polite" hidden
+      style="color:#92400e;background:#fef3c7;padding:8px 10px;border-radius:6px;font-size:.83rem"></div>
 
     <div style="display:flex;gap:12px">
       <div class="field" style="flex:1">
