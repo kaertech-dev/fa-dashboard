@@ -23,6 +23,9 @@ document.getElementById('btn-endorsement-exit').addEventListener('click', closeE
 
 let endorsementRemarksNeedsWriteback = false;
 let endorsementStationLogRef = null;
+let endorsementRetainedFailureMode = null;
+let endorsementFailureModeCarried = false;
+let endorsementCurrentStationLogHasBlankRemarks = false;
 
 function closeEndorsementModal() {
   document.getElementById('modal-endorsement').style.display = 'none';
@@ -34,11 +37,15 @@ function isEndorsementStationEditable() {
   return group === 'FA' || group === 'ADMIN';
 }
 function resetEndorsementForm() {
+  endorsementRetainedFailureMode = null;
+  endorsementFailureModeCarried = false;
+  endorsementCurrentStationLogHasBlankRemarks = false;
   document.getElementById('endorsement-error').textContent = '';
   document.getElementById('endorsement-serial').value = '';
   document.getElementById('endorsement-station').value = '';
   document.getElementById('endorsement-station-list').innerHTML = '';
   document.getElementById('endorsement-failure-mode').value = '';
+  document.getElementById('endorsement-failure-mode-retained-note').hidden = true;
   document.getElementById('endorsement-po').value = '';
   document.getElementById('endorsement-text-display').textContent =
     'Please enter the employee number of the endorser.';
@@ -53,6 +60,13 @@ function resetEndorsementForm() {
   setEndorsementOfflineMode(false);
   resetEndorsementSelect('endorsement-product', 'Auto Shown Product', true);
   resetEndorsementSelect('endorsement-model', 'Auto shown model…', true);
+}
+
+function setEndorsementFailureMode(value, isCarried) {
+  document.getElementById('endorsement-failure-mode').value = value;
+  endorsementFailureModeCarried = isCarried && Boolean(value);
+  document.getElementById('endorsement-failure-mode-retained-note').hidden =
+    !endorsementFailureModeCarried;
 }
 
 function setEndorsementOfflineMode(isOffline) {
@@ -213,6 +227,15 @@ document.getElementById('endorsement-serial').addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); scanEndorsementSerial(); }
 });
 document.getElementById('endorsement-serial').addEventListener('blur', scanEndorsementSerial);
+document.getElementById('endorsement-failure-mode').addEventListener('input', () => {
+  if (endorsementFailureModeCarried) {
+    endorsementFailureModeCarried = false;
+    document.getElementById('endorsement-failure-mode-retained-note').hidden = true;
+  }
+  if (endorsementCurrentStationLogHasBlankRemarks && endorsementStationLogRef) {
+    endorsementRemarksNeedsWriteback = true;
+  }
+});
 
 async function scanEndorsementSerial() {
   const err    = document.getElementById('endorsement-error');
@@ -220,7 +243,12 @@ async function scanEndorsementSerial() {
   err.textContent = '';
   endorsementRemarksNeedsWriteback = false;
   endorsementStationLogRef = null;
+  endorsementCurrentStationLogHasBlankRemarks = false;
   if (!serial) return;
+  setEndorsementFailureMode(
+    endorsementRetainedFailureMode || '',
+    Boolean(endorsementRetainedFailureMode)
+  );
 
   try {
     const res  = await fetch(APP_ROOT + '/api/endorsement/lookup/' + encodeURIComponent(serial));
@@ -232,6 +260,12 @@ async function scanEndorsementSerial() {
 
     if (json.found) {
       const r = json.row;
+      const savedFailureMode = String(r.test_failure || '').trim();
+      const retainedFailureMode = endorsementRetainedFailureMode || '';
+      setEndorsementFailureMode(
+        savedFailureMode || retainedFailureMode,
+        !savedFailureMode && Boolean(retainedFailureMode)
+      );
       document.getElementById('endorsement-po').value = r.po_num || '';
       document.getElementById('endorsement-station').value = r.station || '';
       endorsementRemarksNeedsWriteback = false; // already in FA — not the fresh-scan path
@@ -275,15 +309,20 @@ You can review/update the details (Station is editable) and endorse again.`;
 
     if (logJson.found) {
       const log = logJson.log;
+      const savedFailureMode = String(log.remarks || '').trim();
+      const retainedFailureMode = endorsementRetainedFailureMode || '';
       document.getElementById('endorsement-station').value = log.station || '';
-      document.getElementById('endorsement-failure-mode').value = log.remarks || '';
+      setEndorsementFailureMode(
+        savedFailureMode || retainedFailureMode,
+        !savedFailureMode && Boolean(retainedFailureMode)
+      );
       document.getElementById('endorsement-po').value = log.po_num || '';
 
-      // No remarks on the production/test row — whatever the user types
-      // into Failure Mode here will be written back into that row too.
+      // Write back to the production row only after the operator edits Failure Mode.
       endorsementStationLogRef = log.row_ref || null;
-      endorsementRemarksNeedsWriteback = !log.remarks && Boolean(endorsementStationLogRef);
-      if (!log.remarks && !endorsementStationLogRef) {
+      endorsementCurrentStationLogHasBlankRemarks = !savedFailureMode;
+      endorsementRemarksNeedsWriteback = false;
+      if (!savedFailureMode && !endorsementStationLogRef) {
         err.textContent = 'This station log has no primary key; remarks cannot be safely written back.';
       }
 
@@ -316,7 +355,10 @@ The details are auto-filled. You can review and press "Endorse to FA".`;
     document.getElementById('endorsement-product').value = '';
     document.getElementById('endorsement-model').value = '';
     document.getElementById('endorsement-station').value = '';
-    document.getElementById('endorsement-failure-mode').value = '';
+    setEndorsementFailureMode(
+      endorsementRetainedFailureMode || '',
+      Boolean(endorsementRetainedFailureMode)
+    );
     endorsementRemarksNeedsWriteback = false; // no source table to write back to
 
   } catch (e) {
@@ -401,6 +443,8 @@ document.getElementById('btn-endorsement-submit').addEventListener('click', asyn
     // Modal intentionally stays open — the operator can scan straight into
     // the next unit. Only ✕ / Exit close it now.
     resetEndorsementForm();
+    endorsementRetainedFailureMode = failMode;
+    setEndorsementFailureMode(failMode, false);
     document.getElementById('endorsement-text-display').textContent =
       `✓ Serial ${serial} endorsed to FA successfully.\n\nScan the next serial number, or click ✕ / Exit to close this window.`;
     document.getElementById('endorsement-serial').focus();
