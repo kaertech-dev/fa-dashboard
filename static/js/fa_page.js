@@ -11,12 +11,14 @@ document.getElementById('btn-fa-exit').addEventListener('click', closeFaModal);
 // forward (including against rework.js / return.js).
 const FAPAGE_TEXT_FIELDS   = ['fa-failure-cause', 'fa-affected-comp', 'fa-proposed-action'];
 const FAPAGE_SELECT_FIELDS = ['fa-defect-cat', 'fa-class'];
+let faFieldsRetainedAfterSave = false;
 
 function closeFaModal() {
   document.getElementById('modal-fa').style.display = 'none';
 }
 
 function resetFaForm() {
+  faFieldsRetainedAfterSave = false;
   document.getElementById('fa-error').textContent = '';
   document.getElementById('fa-serial').value = '';
   document.getElementById('fa-datetime').value = '';
@@ -106,13 +108,14 @@ async function scanFaSerial() {
     Endorsed By: ${r.prod_endorser || '–'}
     Endorsement Date & Time: ${formatDate(r.faendorse_datetime)}`;
 
-    // Pre-fill editable fields with whatever's already on record (if this FA is in progress)
-    document.getElementById('fa-failure-cause').value = r.failure_cause || '';
-    document.getElementById('fa-affected-comp').value = r.affected_comp || '';
-    document.getElementById('fa-pic').value = r.fa_pic || '';
-    document.getElementById('fa-proposed-action').value = r.proposed_action || '';
-    ensureOption('fa-defect-cat', r.defect_cat);
-    document.getElementById('fa-class').value = r.fa_class ? String(r.fa_class) : '';
+    if (!faFieldsRetainedAfterSave) {
+      document.getElementById('fa-failure-cause').value = r.failure_cause || '';
+      document.getElementById('fa-affected-comp').value = r.affected_comp || '';
+      document.getElementById('fa-pic').value = r.fa_pic || '';
+      document.getElementById('fa-proposed-action').value = r.proposed_action || '';
+      ensureOption('fa-defect-cat', r.defect_cat);
+      document.getElementById('fa-class').value = r.fa_class ? String(r.fa_class) : '';
+    }
   } catch (e) {
     err.textContent = 'Could not reach server: ' + e.message;
   }
@@ -154,6 +157,7 @@ document.getElementById('btn-fa-submit').addEventListener('click', async () => {
   const json = await res.json();
   if (json.ok) {
     if (typeof loadAndRender === 'function') loadAndRender(); // refresh table/charts
+    faFieldsRetainedAfterSave = true;
     document.getElementById('fa-serial').value = '';
     document.getElementById('fa-datetime').value = '';
     document.getElementById('fa-document-url').value = '';

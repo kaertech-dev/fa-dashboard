@@ -23,6 +23,7 @@ document.getElementById('btn-endorsement-exit').addEventListener('click', closeE
 
 let endorsementRemarksNeedsWriteback = false;
 let endorsementStationLogRef = null;
+let endorsementFailureModeRetained = false;
 
 function closeEndorsementModal() {
   document.getElementById('modal-endorsement').style.display = 'none';
@@ -34,6 +35,7 @@ function isEndorsementStationEditable() {
   return group === 'FA' || group === 'ADMIN';
 }
 function resetEndorsementForm() {
+  endorsementFailureModeRetained = false;
   document.getElementById('endorsement-error').textContent = '';
   document.getElementById('endorsement-serial').value = '';
   document.getElementById('endorsement-station').value = '';
@@ -277,7 +279,9 @@ You can review/update the details (Station is editable) and endorse again.`;
     if (logJson.found) {
       const log = logJson.log;
       document.getElementById('endorsement-station').value = log.station || '';
-      document.getElementById('endorsement-failure-mode').value = log.remarks || '';
+      if (!endorsementFailureModeRetained) {
+        document.getElementById('endorsement-failure-mode').value = log.remarks || '';
+      }
       document.getElementById('endorsement-po').value = log.po_num || '';
 
       // No remarks on the production/test row — whatever the user types
@@ -317,7 +321,9 @@ The details are auto-filled. You can review and press "Endorse to FA".`;
     document.getElementById('endorsement-product').value = '';
     document.getElementById('endorsement-model').value = '';
     document.getElementById('endorsement-station').value = '';
-    document.getElementById('endorsement-failure-mode').value = '';
+    if (!endorsementFailureModeRetained) {
+      document.getElementById('endorsement-failure-mode').value = '';
+    }
     endorsementRemarksNeedsWriteback = false; // no source table to write back to
 
   } catch (e) {
@@ -402,6 +408,8 @@ document.getElementById('btn-endorsement-submit').addEventListener('click', asyn
     // Modal intentionally stays open — the operator can scan straight into
     // the next unit. Only ✕ / Exit close it now.
     resetEndorsementForm();
+    document.getElementById('endorsement-failure-mode').value = failMode;
+    endorsementFailureModeRetained = true;
     document.getElementById('endorsement-text-display').textContent =
       `✓ Serial ${serial} endorsed to FA successfully.\n\nScan the next serial number, or click ✕ / Exit to close this window.`;
     document.getElementById('endorsement-serial').focus();
