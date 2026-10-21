@@ -8,6 +8,11 @@ let runUnitsController = null;
 let lastRunUnitsValue = null;
 let availableDashboardDates = [];
 let dataRequestId = 0;
+let failureDocumentsRequest = 0;
+let dashboardAttachmentSerial = '';
+let dashboardAttachmentCase = '';
+let dashboardAttachmentSaving = false;
+let monthlyStatus = { open: 0, in_progress: 0, reworked: 0, closed: 0 };
 const PAGE_SIZE = 50;
 const COLORS = ['#f78166','#79c0ff','#56d364','#d29922','#bc8cff','#58a6ff','#ff7b72','#39d353','#ffa657','#a5d6ff'];
 
@@ -671,6 +676,7 @@ async function loadAndRender() {
 
   try {
     await loadHideDatesFromDB();
+    await loadMonthlyStatus();
 
     const datesRes = await fetch(APP_ROOT + '/api/data_dates');
     const datesJson = await datesRes.json();
@@ -694,7 +700,7 @@ async function loadAndRender() {
     if (!json.ok) {
       throw new Error(json.error || 'Failed to load data.');
     }
-
+    allData = Array.isArray(json.rows) ? json.rows : [];
     allData = Array.isArray(json.rows) ? json.rows : [];
 
     page = 1;
@@ -737,6 +743,7 @@ async function refreshData() {
 
     // Replace the data with the latest server data
     allData = Array.isArray(json.rows) ? json.rows : [];
+    await loadMonthlyStatus();
 
     // IMPORTANT:
     // Do NOT reset page = 1 here.
@@ -785,6 +792,7 @@ async function reloadForDateSelection() {
     const json = await res.json();
     if (!json.ok) throw new Error(json.error || 'Failed to load selected dates.');
     allData = Array.isArray(json.rows) ? json.rows : [];
+    await loadMonthlyStatus();
     page = 1;
     refreshCascadingFilters();
     saveFilterState();
@@ -1062,6 +1070,39 @@ function renderKPIs() {
   document.getElementById('kpi-products').textContent = new Set(filteredData.map(r=>r.product).filter(Boolean)).size;
   if (lastRunUnitsValue === null) {
     document.getElementById('kpi-run-units').textContent = '–';
+  }
+}
+
+function updateMonthlyStatus(status) {
+  if (status && typeof status === 'object') {
+    monthlyStatus = {
+      open: Number(status.status?.open) || 0,
+      in_progress: Number(status.status?.in_progress) || 0,
+      reworked: Number(status.status?.reworked) || 0,
+      closed: Number(status.status?.closed) || 0
+    };
+  }
+  const [year, month] = String(status?.month || '').split('-').map(Number);
+  const monthLabel = year && month
+    ? new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+    : 'Current Month';
+  document.getElementById('monthly-kpi-month').textContent = monthLabel;
+  document.getElementById('monthly-kpi-open').textContent = monthlyStatus.open.toLocaleString();
+  document.getElementById('monthly-kpi-in-progress').textContent = monthlyStatus.in_progress.toLocaleString();
+  document.getElementById('monthly-kpi-reworked').textContent = monthlyStatus.reworked.toLocaleString();
+  document.getElementById('monthly-kpi-closed').textContent = monthlyStatus.closed.toLocaleString();
+}
+
+async function loadMonthlyStatus() {
+  try {
+    const response = await fetch(APP_ROOT + '/api/monthly_status', { cache: 'no-store' });
+    const json = await response.json();
+    if (!response.ok || !json.ok) {
+      throw new Error(json.error || `Server returned HTTP ${response.status}`);
+    }
+    updateMonthlyStatus(json);
+  } catch (error) {
+    console.error('[FA Dashboard] Monthly status load failed:', error);
   }
 }
 
@@ -1484,6 +1525,27 @@ function faCaseLink(records) {
   return `<a class="pareto-case-link" href="${escapeHtml(value)}" target="_blank" rel="noopener noreferrer">See Documents</a>`;
 }
 
+function faCaseUploadButton(faCase, records) {
+  const group = (localStorage.getItem('fa_group') || '').toUpperCase();
+  if (!['FA', 'ADMIN'].includes(group)) return '';
+  const serial = records.find(record => record.serial_num)?.serial_num;
+  if (!serial || !faCase || faCase === 'Unknown') return '';
+  return `<button type="button" class="pareto-case-upload" data-fa-case="${escapeHtml(faCase)}" data-serial="${escapeHtml(serial)}">Upload Link</button>`;
+}
+
+function bindParetoCaseRows(container) {
+  container.querySelectorAll('.pareto-case-row').forEach(row => {
+    row.addEventListener('click', () => showFaCaseRecords(row.dataset.faCase));
+    row.querySelector('.pareto-case-link')?.addEventListener('click', event => event.stopPropagation());
+    row.querySelector('.pareto-case-upload')?.addEventListener('click', event => {
+      event.stopPropagation();
+      dashboardAttachmentSerial = event.currentTarget.dataset.serial;
+      dashboardAttachmentCase = event.currentTarget.dataset.faCase;
+      openDashboardAttachmentModal();
+    });
+  });
+}
+
 function drawParetoTrend(topGroups) {
   const canvas = document.getElementById('chart-pareto-trend');
   if (!canvas) return;
@@ -1636,12 +1698,10 @@ function renderPareto() {
       <span class="pareto-rank">${index + 1}</span>
       <span class="pareto-case-name">${fmt(faCase)}</span>
       ${faCaseLink(records)}
+      ${faCaseUploadButton(faCase, records)}
       <span class="pareto-case-count">${unitsAffected(records).toLocaleString()} units</span>
     </div>`).join('');
-  listEl.querySelectorAll('.pareto-case-row').forEach(button => {
-    button.addEventListener('click', () => showFaCaseRecords(button.dataset.faCase));
-    button.querySelector('.pareto-case-link')?.addEventListener('click', event => event.stopPropagation());
-  });
+  bindParetoCaseRows(listEl);
 }
 
 function showFaCaseRecords(faCase) {
@@ -1658,12 +1718,10 @@ function showParetoGroups() {
       <span class="pareto-rank">${index + 1}</span>
       <span class="pareto-case-name">${fmt(faCase)}</span>
       ${faCaseLink(records)}
+      ${faCaseUploadButton(faCase, records)}
       <span class="pareto-case-count">${unitsAffected(records).toLocaleString()} units</span>
     </div>`).join('') || '<div class="pareto-empty">No FA case data</div>';
-  body.querySelectorAll('.pareto-case-row').forEach(button => {
-    button.addEventListener('click', () => showFaCaseRecords(button.dataset.faCase));
-    button.querySelector('.pareto-case-link')?.addEventListener('click', event => event.stopPropagation());
-  });
+  bindParetoCaseRows(body);
   paretoGroupsModal.style.display = 'flex';
   document.body.style.overflow = 'hidden';
 }
@@ -1747,7 +1805,7 @@ const failureListModal = document.getElementById('modal-failure-list');
 function showFailureList(status) {
   if (!failureListModal) return;
 
-  const titleMap = { '1': 'Open FA', '2': 'In Progress', '4': 'Closed' };
+  const titleMap = { '1': 'Open FA', '2': 'In Progress', '3': 'Reworked', '4': 'Closed' };
   const matches = filteredData.filter(r => String(r.farepair_status) === String(status));
   renderFailureList(titleMap[status] ? `${titleMap[status]} — matching records` : 'Matching records', matches);
 }
@@ -1821,6 +1879,9 @@ function failureDetailDate(value) {
 
 function showFailureRecord(record) {
   if (!record) return;
+  dashboardAttachmentSerial = String(record.serial_num || '');
+  dashboardAttachmentCase = String(record.fa_case || '');
+  document.getElementById('btn-dashboard-fa-attachment').disabled = !dashboardAttachmentCase;
 
   // Focus information
   document.getElementById('failure-detail-serial').textContent =
@@ -1840,6 +1901,10 @@ function showFailureRecord(record) {
     statusEl.style.color = '#b45309';
   } else if (status === 2) {
     statusEl.textContent = 'WIP';
+    statusEl.style.background = 'rgba(37,99,235,.13)';
+    statusEl.style.color = '#2563eb';
+  } else if (status === 3) {
+    statusEl.textContent = 'REWORKED';
     statusEl.style.background = 'rgba(37,99,235,.13)';
     statusEl.style.color = '#2563eb';
   } else if (status === 4) {
@@ -1912,6 +1977,8 @@ function showFailureRecord(record) {
   document.getElementById('fd-returned-date').textContent =
     failureDetailDate(record.returned_datetime);
 
+  loadFailureRecordDocuments(record.serial_num);
+
   // Show modal
   failureDetailModal.style.display = 'flex';
 
@@ -1919,7 +1986,110 @@ function showFailureRecord(record) {
   document.body.style.overflow = 'hidden';
 }
 
+async function loadFailureRecordDocuments(serialNum) {
+  const requestId = ++failureDocumentsRequest;
+  const container = document.getElementById('fd-document-links');
+  container.textContent = 'Loading documents…';
+  try {
+    const response = await fetch(
+      `${APP_ROOT}/api/failure_analysis/attachments/${encodeURIComponent(serialNum)}`
+    );
+    const json = await response.json();
+    if (requestId !== failureDocumentsRequest) return;
+    if (!response.ok || !json.ok) {
+      throw new Error(json.error || `Server returned HTTP ${response.status}`);
+    }
+    renderFaDocumentLinks(container, json.document_urls || [], 'No documents saved for this FA case.');
+  } catch (error) {
+    if (requestId !== failureDocumentsRequest) return;
+    container.textContent = `Could not load FA case documents: ${error.message}`;
+  }
+}
+
+function openDashboardAttachmentModal() {
+  if (!dashboardAttachmentSerial || !dashboardAttachmentCase) return;
+  document.getElementById('dashboard-fa-attachment-error').textContent = '';
+  document.getElementById('dashboard-fa-attachment-url').value = '';
+  document.getElementById('dashboard-fa-attachment-case').textContent =
+    `Serial ${dashboardAttachmentSerial} · FA Case ${dashboardAttachmentCase}`;
+  document.getElementById('modal-dashboard-fa-attachment').style.display = 'flex';
+  document.getElementById('dashboard-fa-attachment-url').focus();
+}
+
+function closeDashboardAttachmentModal() {
+  if (dashboardAttachmentSaving) return;
+  document.getElementById('modal-dashboard-fa-attachment').style.display = 'none';
+}
+
+document.getElementById('btn-dashboard-fa-attachment')
+  .addEventListener('click', openDashboardAttachmentModal);
+document.getElementById('btn-dashboard-fa-attachment-close')
+  .addEventListener('click', closeDashboardAttachmentModal);
+document.getElementById('btn-dashboard-fa-attachment-cancel')
+  .addEventListener('click', closeDashboardAttachmentModal);
+document.getElementById('modal-dashboard-fa-attachment').addEventListener('click', event => {
+  if (event.target.id === 'modal-dashboard-fa-attachment') closeDashboardAttachmentModal();
+});
+document.getElementById('btn-dashboard-fa-attachment-submit')
+  .addEventListener('click', async () => {
+    const errorEl = document.getElementById('dashboard-fa-attachment-error');
+    const urlInput = document.getElementById('dashboard-fa-attachment-url');
+    const documentUrl = urlInput.value.trim();
+    errorEl.textContent = '';
+    if (!dashboardAttachmentSerial || !dashboardAttachmentCase) {
+      errorEl.textContent = 'The selected serial does not have an FA case yet.';
+      return;
+    }
+    try {
+      const parsedUrl = new URL(documentUrl);
+      if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+        throw new Error('Enter an http:// or https:// link.');
+      }
+    } catch (error) {
+      errorEl.textContent = error.message === 'Invalid URL'
+        ? 'Enter a valid document URL.'
+        : error.message;
+      return;
+    }
+
+    const submitButton = document.getElementById('btn-dashboard-fa-attachment-submit');
+    dashboardAttachmentSaving = true;
+    submitButton.disabled = true;
+    try {
+      const response = await fetch(APP_ROOT + '/api/failure_analysis/attachment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          serial_num: dashboardAttachmentSerial,
+          document_url: documentUrl
+        })
+      });
+      const json = await response.json();
+      if (!response.ok || !json.ok) {
+        throw new Error(json.error || `Server returned HTTP ${response.status}`);
+      }
+      renderFaDocumentLinks(
+        document.getElementById('fd-document-links'),
+        json.document_urls || [],
+        'No documents saved for this FA case.'
+      );
+      document.getElementById('modal-dashboard-fa-attachment').style.display = 'none';
+    } catch (error) {
+      errorEl.textContent = `Could not save document link: ${error.message}`;
+    } finally {
+      dashboardAttachmentSaving = false;
+      submitButton.disabled = false;
+    }
+  });
+
 function closeFailureRecordModal() {
+  if (document.getElementById('modal-dashboard-fa-attachment').style.display === 'flex') {
+    closeDashboardAttachmentModal();
+    return;
+  }
+  failureDocumentsRequest += 1;
+  dashboardAttachmentSerial = '';
+  dashboardAttachmentCase = '';
   failureDetailModal.style.display = 'none';
   document.body.style.overflow = '';
 }

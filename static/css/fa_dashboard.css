@@ -185,6 +185,12 @@ main { padding: 28px; max-width: 1400px; margin: 0 auto; }
 .kpi-label { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 8px; }
 .kpi-val   { font-size: 2rem; font-weight: 700; line-height: 1; }
 .kpi-sub   { font-size: .78rem; color: var(--muted); margin-top: 6px; }
+.monthly-status { margin: 0 0 24px; }
+.monthly-status .kpi-row { margin-bottom: 8px; }
+.monthly-status .section-title span { margin-left: 6px; color: var(--text); }
+.monthly-status-note { color: var(--muted); font-size: .76rem; }
+.fa-document-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.fa-document-links a { color: var(--accent3); overflow-wrap: anywhere; }
 
 /* ── CHARTS ── */
 .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
@@ -211,8 +217,10 @@ main { padding: 28px; max-width: 1400px; margin: 0 auto; }
 .pareto-detail-grid strong { display: block; font-size: .84rem; line-height: 1.35; overflow-wrap: anywhere; }
 .pareto-list-header { display: flex; align-items: center; justify-content: space-between; margin: 20px 0 8px; color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .5px; }
 .pareto-case-list, .pareto-groups-body { display: grid; gap: 6px; max-height: 420px; overflow-y: auto; }
-.pareto-case-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto auto; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface2); color: var(--text); text-align: left; cursor: pointer; }
+.pareto-case-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto auto auto; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface2); color: var(--text); text-align: left; cursor: pointer; }
 .pareto-case-row:hover { border-color: var(--accent3); background: #eff6ff; }
+.pareto-case-upload { padding: 6px 10px; border: 1px solid var(--accent3); border-radius: 6px; background: var(--surface); color: var(--accent3); font-size: .78rem; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.pareto-case-upload:hover { background: var(--accent3); color: #fff; }
 .pareto-rank { color: var(--muted); font-weight: 700; }
 .pareto-case-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pareto-case-count { color: var(--accent3); font-size: .78rem; white-space: nowrap; }

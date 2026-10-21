@@ -9,7 +9,7 @@ from flask import Flask, request, jsonify, render_template, session, redirect, u
 from werkzeug.middleware.proxy_fix import ProxyFix
 from functions import (
     get_fa_conn, authenticate, hash_badge,
-    get_fa_by_serial, get_fa_url, save_fa_url, get_distinct_values, update_fa, update_rework,
+    get_fa_by_serial, get_fa_urls, save_fa_url, get_distinct_values, update_fa, update_rework,
     create_or_update_endorsement,
 )
 from active_customer import ActiveProjects, StationLog
@@ -328,10 +328,28 @@ def fa_lookup(serial_num):
             k: (str(v) if v is not None and not isinstance(v, (int, float, str, bool)) else v)
             for k, v in row.items()
         }
-        clean["url"] = get_fa_url(clean.get("fa_case"))
+        document_urls = get_fa_urls(clean.get("fa_case"))
+        clean["url"] = document_urls[-1] if document_urls else None
+        clean["document_urls"] = document_urls
         return jsonify({"ok": True, "row": clean})
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
+
+@app.route("/api/failure_analysis/attachments/<serial_num>", methods=["GET"])
+@require_login
+def fa_attachments(serial_num):
+    try:
+        row = get_fa_by_serial(serial_num.strip())
+        if row is None:
+            return jsonify({"ok": False, "error": "Serial number not found."}), 404
+        fa_case = row.get("fa_case")
+        return jsonify({
+            "ok": True,
+            "fa_case": fa_case,
+            "document_urls": get_fa_urls(fa_case),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB error: {e}"}), 500
 
 @app.route("/api/failure_analysis/options", methods=["GET"])
 @require_login
@@ -354,7 +372,7 @@ def fa_options():
 @app.route("/api/failure_analysis/update", methods=["POST"])
 @require_group("FA")
 def update_fa_route():
-    data = request.get_json(silent=True)
+    data = request.get_json(silent=True) or {}
     serial_num = data.get("serial_num", "").strip()
     fa_class   = str(data.get("fa_class", "")).strip()
     document_url = data.get("document_url", "").strip()
@@ -387,6 +405,34 @@ def update_fa_route():
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
+
+@app.route("/api/failure_analysis/attachment", methods=["POST"])
+@require_group("FA")
+def add_fa_attachment():
+    data = request.get_json(silent=True) or {}
+    serial_num = str(data.get("serial_num") or "").strip()
+    document_url = str(data.get("document_url") or "").strip()
+
+    if not serial_num:
+        return jsonify({"ok": False, "error": "Serial number is required."}), 400
+    if not document_url.lower().startswith(("http://", "https://")):
+        return jsonify({"ok": False, "error": "Document URL must start with http:// or https://."}), 400
+
+    try:
+        row = get_fa_by_serial(serial_num)
+        if row is None:
+            return jsonify({"ok": False, "error": "Serial number not found."}), 404
+        fa_case = row.get("fa_case")
+        if not fa_case:
+            return jsonify({
+                "ok": False,
+                "error": "Submit the failure analysis first to generate an FA case before adding document links.",
+            }), 400
+        if not save_fa_url(fa_case, document_url):
+            return jsonify({"ok": False, "error": "Could not save the document link."}), 500
+        return jsonify({"ok": True, "document_urls": get_fa_urls(fa_case)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB error: {e}"}), 500
 
 # =================================================================================================rework
 @app.route("/api/rework/lookup/<serial_num>", methods=["GET"])
@@ -612,6 +658,7 @@ def data():
     # Clamp the requested start to the user's effective date, if one is set.
     # date_effective is stored as "%Y-%m-%d %H:%M:%S" — parse it fully,
     # then compare as datetimes, not as mismatched strings.
+    effective_start = None
     if date_effective:
         effective_start = datetime.strptime(date_effective, "%Y-%m-%d %H:%M:%S")
         if start < effective_start:
@@ -660,6 +707,55 @@ def data():
         return jsonify(payload)
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
+
+@app.route("/api/monthly_status", methods=["GET"])
+@require_login
+def monthly_status():
+    now = datetime.now()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_end = (
+        month_start.replace(year=month_start.year + 1, month=1, day=1)
+        if month_start.month == 12
+        else month_start.replace(month=month_start.month + 1, day=1)
+    )
+    date_effective = session.get("date_effective")
+    if date_effective:
+        effective_start = datetime.strptime(date_effective, "%Y-%m-%d %H:%M:%S")
+        month_start = max(month_start, effective_start)
+
+    try:
+        conn = get_fa_conn()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    COALESCE(SUM(CASE WHEN farepair_status = 1 THEN 1 ELSE 0 END), 0) AS open,
+                    COALESCE(SUM(CASE WHEN farepair_status = 2 THEN 1 ELSE 0 END), 0) AS in_progress,
+                    COALESCE(SUM(CASE WHEN farepair_status = 3 THEN 1 ELSE 0 END), 0) AS reworked,
+                    COALESCE(SUM(CASE WHEN farepair_status = 4 THEN 1 ELSE 0 END), 0) AS closed
+                FROM fa.main AS fa_records
+                WHERE fa_records.faendorse_datetime >= %s
+                  AND fa_records.faendorse_datetime < %s
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM fa.fa_analysis AS hidden_dates
+                      WHERE hidden_dates.hide_dates = DATE(fa_records.faendorse_datetime)
+                  )
+                """,
+                (month_start, month_end),
+            )
+            row = cur.fetchone()
+        conn.close()
+        return jsonify({
+            "ok": True,
+            "month": now.strftime("%Y-%m"),
+            "status": {
+                status: int(row[status] or 0)
+                for status in ("open", "in_progress", "reworked", "closed")
+            },
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB error: {e}"}), 500
 
 @app.route("/api/data_dates", methods=["GET"])
 @require_login

@@ -186,6 +186,17 @@
       <div class="kpi-card blue"> <div class="kpi-label">Total pass Units</div>     <div class="kpi-val" id="kpi-run-units">–</div><div class="kpi-sub">unique serials</div></div>
     </div>
 
+    <div class="monthly-status">
+      <div class="section-title">Current Month Status <span id="monthly-kpi-month"></span></div>
+      <div class="kpi-row">
+        <div class="kpi-card warn"><div class="kpi-label">Open FA</div><div class="kpi-val" id="monthly-kpi-open">–</div><div class="kpi-sub">Endorsed this month</div></div>
+        <div class="kpi-card blue"><div class="kpi-label">In Progress</div><div class="kpi-val" id="monthly-kpi-in-progress">–</div><div class="kpi-sub">Endorsed this month</div></div>
+        <div class="kpi-card blue"><div class="kpi-label">Reworked</div><div class="kpi-val" id="monthly-kpi-reworked">–</div><div class="kpi-sub">Endorsed this month</div></div>
+        <div class="kpi-card green"><div class="kpi-label">Closed</div><div class="kpi-val" id="monthly-kpi-closed">–</div><div class="kpi-sub">Endorsed this month</div></div>
+      </div>
+      <div class="monthly-status-note">Counts show each unit's current status, regardless of the selected dashboard date range.</div>
+    </div>
+
     <!-- Charts row 1: Product + Station -->
     <div class="charts-row">
       <div class="chart-card">
@@ -373,6 +384,8 @@
     <div class="field">
       <label>FA DOCUMENT URL</label>
       <input type="url" id="fa-document-url" placeholder="https://...">
+      <button type="button" class="btn-reset" id="btn-fa-attachment" style="width:100%;margin-top:8px">Upload Attachment Link</button>
+      <div id="fa-document-links" class="fa-document-links" aria-live="polite"></div>
     </div>
 
     <div style="display:flex;gap:12px">
@@ -801,6 +814,16 @@
       </div>
     </div>
 
+    <div class="failure-detail-section">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+        <div class="failure-detail-section-title" style="margin-bottom:0">FA Case Documents</div>
+        <button type="button" class="btn-reset" id="btn-dashboard-fa-attachment" data-group="FA">
+          Upload Attachment
+        </button>
+      </div>
+      <div id="fd-document-links" class="fa-document-links" aria-live="polite">–</div>
+    </div>
+
     <!-- Repair -->
     <div class="failure-detail-section">
       <div class="failure-detail-section-title">
@@ -836,6 +859,33 @@
       </button>
     </div>
 
+  </div>
+</div>
+
+<!-- Dashboard FA case attachment modal -->
+<div id="modal-dashboard-fa-attachment" class="modal-backdrop" style="display:none">
+  <div class="modal-card" style="max-width:520px">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">UPLOAD FA CASE LINK</div>
+        <div id="dashboard-fa-attachment-case" class="failure-detail-subtitle"></div>
+      </div>
+      <button class="modal-close" id="btn-dashboard-fa-attachment-close" type="button">✕</button>
+    </div>
+    <div class="field">
+      <label for="dashboard-fa-attachment-url">DOCUMENT URL</label>
+      <input type="url" id="dashboard-fa-attachment-url" placeholder="https://..." required>
+    </div>
+    <div id="dashboard-fa-attachment-error" role="status" aria-live="polite"
+      style="color:var(--danger);font-size:.83rem;min-height:18px;margin-bottom:8px"></div>
+    <div style="display:flex;gap:10px">
+      <button class="btn-apply" id="btn-dashboard-fa-attachment-submit" type="button" style="flex:1">
+        Save Link
+      </button>
+      <button class="btn-reset" id="btn-dashboard-fa-attachment-cancel" type="button" style="flex:1">
+        Cancel
+      </button>
+    </div>
   </div>
 </div>
 

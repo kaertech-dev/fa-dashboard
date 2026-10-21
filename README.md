@@ -23,7 +23,9 @@ Production  --endorse-->  FA engineer  --analyse-->  Process  --rework-->  Proce
 | Rework | PROCESS group | Rework | Repairer, action taken, repaired date and time, `farepair_status = 3` |
 | Return | PROCESS group | Return | Returned date and time, `farepair_status = 4` |
 
-**FA case number** format: `FA{year}{day of year}{3-digit counter}`, for example `FA2026282001`. It is generated when a unit's FA record is first saved. A database lock prevents two users getting the same number.
+**FA case number** format: `FA{year}{day of year}{3-digit counter}`, for example `FA2026282001`. Cases are generated during normal FA updates. To consolidate existing records with the same trimmed, case-insensitive failure cause, product, and model across all days, use the separate `scripts/filter_fa_cases.py` maintenance script. It keeps the first generated case number in each group.
+
+Document URLs are saved against the FA case, not an individual serial. Multiple links can be added without replacing earlier links; scanning or opening any serial in that case shows the case's complete document-link list.
 
 **Endorsement lookup:** scanning a serial searches the product's station tables, takes the last station log, and fills in product, model, station and PO. The station's `remarks` become the failure mode. If a unit has no remarks, the endorser types the failure mode, and it is written back to the station log row.
 
@@ -43,6 +45,7 @@ Every signed-in user can view the dashboard and change their own badge. The serv
 
 - Filters by product, model, station, status and date range (with **Today**, **Reset** and **Apply Filters**).
 - Charts: records by product, by station, by defect category, and a Pareto trend of the most common failure modes.
+- A separate **Current Month Status** snapshot shows the current status of units endorsed this calendar month (Open FA, In Progress, Reworked and Closed), regardless of the selected dashboard date range.
 - Records table with paging and a failure detail view.
 - Excel export of the data.
 - **Hide dates:** authorised persons can hide specific dates, with a reason, so they are left out of the dashboard data.
@@ -146,6 +149,13 @@ python -m flask --app app run --port 5007
 
 ```bash
 python scripts/add_run_units_indexes.py
+```
+
+`scripts/filter_fa_cases.py` previews changes to `fa.main.fa_case` for records that share a product, model, and failure cause across all dates. It preserves the lowest/first generated case number in each group. Run without options to preview; pass `--apply` to update only the `fa_case` values.
+
+```bash
+python scripts/filter_fa_cases.py
+python scripts/filter_fa_cases.py --apply
 ```
 
 ## Deployment rules
