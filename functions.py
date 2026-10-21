@@ -73,34 +73,42 @@ def get_fa_by_serial(serial_num: str):
     return row
 
 def get_fa_url(fa_case: str):
-    """Return the document link stored for an FA case, if one exists."""
+    """Return the most recently stored document link for an FA case."""
+    urls = get_fa_urls(fa_case)
+    return urls[-1] if urls else None
+
+def get_fa_urls(fa_case: str):
+    """Return all document links stored for an FA case."""
     if not fa_case:
-        return None
+        return []
     conn = get_fa_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT link FROM fa.url WHERE fa_case = %s "
-                "AND link IS NOT NULL AND link <> '' ORDER BY id DESC LIMIT 1",
+                "AND link IS NOT NULL AND link <> '' ORDER BY id",
                 (fa_case,),
             )
-            row = cur.fetchone()
+            rows = cur.fetchall()
     finally:
         conn.close()
-    return row["link"] if row else None
+    return [row["link"] for row in rows]
 
 def save_fa_url(fa_case: str, link: str):
-    """Update the document link for an FA case, or create it when missing."""
+    """Add a document link to an FA case without replacing existing links."""
     if not fa_case:
         return False
+    link = (link or "").strip()
+    if not link:
+        return True
     conn = get_fa_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT id FROM fa.url WHERE fa_case = %s ORDER BY id DESC LIMIT 1", (fa_case,))
-            row = cur.fetchone()
-            if row:
-                cur.execute("UPDATE fa.url SET link = %s WHERE fa_case = %s", (link or None, fa_case))
-            elif link:
+            cur.execute(
+                "SELECT id FROM fa.url WHERE fa_case = %s AND link = %s LIMIT 1",
+                (fa_case, link),
+            )
+            if cur.fetchone() is None:
                 cur.execute("INSERT INTO fa.url (fa_case, link) VALUES (%s, %s)", (fa_case, link))
             conn.commit()
     finally:
@@ -176,7 +184,12 @@ def update_fa(serial_num: str, fields: dict):
             lock_acquired = True
 
             cur.execute(
-                "SELECT fa_case FROM fa.main WHERE serial_num = %s LIMIT 1 FOR UPDATE",
+                """
+                SELECT fa_case
+                FROM fa.main
+                WHERE serial_num = %s
+                LIMIT 1 FOR UPDATE
+                """,
                 (serial_num,),
             )
             existing = cur.fetchone()

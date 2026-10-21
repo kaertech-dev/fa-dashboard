@@ -25,6 +25,7 @@ function resetFaForm() {
   document.getElementById('fa-datetime').value = '';
   document.getElementById('fa-text-display').textContent = 'Scan a serial number to load UUT details…';
   document.getElementById('fa-document-url').value = '';
+  renderFaDocumentLinks(document.getElementById('fa-document-links'), [], 'Scan a serial to view its FA case documents.');
   FAPAGE_TEXT_FIELDS.forEach(id => document.getElementById(id).value = '');
   FAPAGE_SELECT_FIELDS.forEach(id => document.getElementById(id).value = '');
   document.getElementById('fa-pic').value = '';
@@ -68,6 +69,29 @@ function ensureOption(selectId, value) {
   sel.value = value;
 }
 
+function renderFaDocumentLinks(container, urls, emptyMessage) {
+  container.replaceChildren();
+  let linkCount = 0;
+  (Array.isArray(urls) ? urls : []).forEach(value => {
+    const text = String(value || '').trim();
+    let parsed;
+    try {
+      parsed = new URL(text);
+    } catch (error) {
+      return;
+    }
+    if (!['http:', 'https:'].includes(parsed.protocol)) return;
+    const link = document.createElement('a');
+    link.href = parsed.href;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = text;
+    container.appendChild(link);
+    linkCount += 1;
+  });
+  if (!linkCount) container.textContent = emptyMessage;
+}
+
 function formatDate(v) {
   if (!v) return '–';
   return String(v).replace('T', ' ').slice(0, 19);
@@ -91,6 +115,7 @@ async function scanFaSerial() {
     if (!json.ok) {
       document.getElementById('fa-text-display').textContent = 'Serial number not found.';
       document.getElementById('fa-datetime').value = '';
+      renderFaDocumentLinks(document.getElementById('fa-document-links'), [], 'No documents available.');
       err.textContent = json.error || 'Serial number not found.';
       return;
     }
@@ -98,6 +123,11 @@ async function scanFaSerial() {
 
     document.getElementById('fa-datetime').value = formatDate(r.faendorse_datetime);
     document.getElementById('fa-document-url').value = r.url || '';
+    renderFaDocumentLinks(
+      document.getElementById('fa-document-links'),
+      r.document_urls || [],
+      'No documents saved for this FA case.'
+    );
     document.getElementById('fa-text-display').textContent =
     `UUT DETAILS:
 
@@ -146,6 +176,46 @@ document.getElementById('btn-fa-pic-change').addEventListener('click', () => {
   if (!inp.readOnly) inp.focus();
 });
 
+document.getElementById('btn-fa-attachment').addEventListener('click', async () => {
+  const err = document.getElementById('fa-error');
+  const serial = document.getElementById('fa-serial').value.trim();
+  const documentUrl = document.getElementById('fa-document-url').value.trim();
+  err.textContent = '';
+  if (!serial) {
+    err.textContent = 'Scan a serial number before adding a document link.';
+    return;
+  }
+  if (!documentUrl) {
+    err.textContent = 'Enter a document URL before uploading the link.';
+    return;
+  }
+
+  const button = document.getElementById('btn-fa-attachment');
+  button.disabled = true;
+  try {
+    const response = await fetch(APP_ROOT + '/api/failure_analysis/attachment', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serial_num: serial, document_url: documentUrl })
+    });
+    const json = await response.json();
+    if (!response.ok || !json.ok) {
+      err.textContent = json.error || 'Failed to add the document link.';
+      return;
+    }
+    renderFaDocumentLinks(
+      document.getElementById('fa-document-links'),
+      json.document_urls || [],
+      'No documents saved for this FA case.'
+    );
+    err.textContent = 'Document link saved to this FA case.';
+  } catch (error) {
+    err.textContent = 'Could not save document link: ' + error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
 // ── SUBMIT ────────────────────────────────────────────────────────────────────
 document.getElementById('btn-fa-submit').addEventListener('click', async () => {
   const err = document.getElementById('fa-error');
@@ -186,6 +256,7 @@ document.getElementById('btn-fa-submit').addEventListener('click', async () => {
     document.getElementById('fa-serial').value = '';
     document.getElementById('fa-datetime').value = '';
     document.getElementById('fa-document-url').value = '';
+    renderFaDocumentLinks(document.getElementById('fa-document-links'), [], 'Scan a serial to view its FA case documents.');
     document.getElementById('fa-text-display').textContent =
       'Scan a serial number to load UUT details…';
     document.getElementById('fa-serial').focus();
