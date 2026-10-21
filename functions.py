@@ -185,7 +185,7 @@ def update_fa(serial_num: str, fields: dict):
 
             cur.execute(
                 """
-                SELECT fa_case, failure_cause, product, model
+                SELECT fa_case
                 FROM fa.main
                 WHERE serial_num = %s
                 LIMIT 1 FOR UPDATE

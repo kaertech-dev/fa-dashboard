@@ -701,7 +701,6 @@ async function loadAndRender() {
       throw new Error(json.error || 'Failed to load data.');
     }
     allData = Array.isArray(json.rows) ? json.rows : [];
-    allData = Array.isArray(json.rows) ? json.rows : [];
 
     page = 1;
 
