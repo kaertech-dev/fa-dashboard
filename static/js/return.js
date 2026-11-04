@@ -5,16 +5,22 @@ document.getElementById('btn-return-close').addEventListener('click', closeRetur
 document.getElementById('btn-return-exit').addEventListener('click', closeReturnModal);
 
 const RETURN_DEFAULT_MSG = 'Please enter the employee number of the person-in-charge.';
+let returnPicRetained = false;
 
 function closeReturnModal() {
   document.getElementById('modal-return').style.display = 'none';
 }
 
-function resetReturnForm() {
+function clearReturnSerial() {
   document.getElementById('return-error').textContent = '';
   document.getElementById('return-serial').value = '';
   document.getElementById('return-datetime').value = '';
   document.getElementById('return-text-display').textContent = RETURN_DEFAULT_MSG;
+}
+
+function resetReturnForm() {
+  clearReturnSerial();
+  returnPicRetained = false;
   document.getElementById('return-pic').value = '';
   document.getElementById('return-pic').readOnly = true;
 }
@@ -36,11 +42,7 @@ function formatReturnDate(v) {
 document.getElementById('return-serial').addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); scanReturnSerial(); }
 });
-document.getElementById('rework-serial').addEventListener('keydown', e => {
-  if (e.key === 'Enter') { e.preventDefault(); scanReworkSerial(); }
-});
 document.getElementById('return-serial').addEventListener('blur', scanReturnSerial);
-document.getElementById('rework-serial').addEventListener('blur', scanReworkSerial);
 
 async function scanReturnSerial() {
   const err    = document.getElementById('return-error');
@@ -84,7 +86,9 @@ REPAIR SUMMARY:
     Repairer: ${r.repairer || '–'}
     Repaired Date: ${formatReturnDate(r.repaired_datetime)}`;
 
-    document.getElementById('return-pic').value = r.repairer || '';
+    if (!returnPicRetained) {
+      document.getElementById('return-pic').value = r.repairer || '';
+    }
   } catch (e) {
     err.textContent = 'Could not reach server: ' + e.message;
   }
@@ -98,6 +102,10 @@ document.getElementById('btn-return-pic-change').addEventListener('click', () =>
   document.getElementById('return-text-display').textContent = inp.readOnly
     ? RETURN_DEFAULT_MSG
     : 'Enter the employee number of the person returning this unit.';
+});
+
+document.getElementById('return-pic').addEventListener('input', () => {
+  returnPicRetained = true;
 });
 
 // ── SUBMIT ────────────────────────────────────────────────────────────────────
@@ -121,7 +129,9 @@ document.getElementById('btn-return-submit').addEventListener('click', async () 
   const json = await res.json();
   if (json.ok) {
     if (typeof loadAndRender === 'function') loadAndRender();
-    resetReturnForm();
+    returnPicRetained = true;
+    clearReturnSerial();
+    document.getElementById('return-serial').focus();
   } else {
     err.textContent = json.error || 'Failed to return unit.';
   }

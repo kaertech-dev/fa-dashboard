@@ -5,16 +5,22 @@ document.getElementById('btn-rework-close').addEventListener('click', closeRewor
 document.getElementById('btn-rework-exit').addEventListener('click', closeReworkModal);
 
 const REWORK_DEFAULT_MSG = 'Please enter the employee number of the reworker.';
+let reworkRetained = { reworker: false, actionTaken: false };
 
 function closeReworkModal() {
   document.getElementById('modal-rework').style.display = 'none';
 }
 
-function resetReworkForm() {
+function clearReworkSerial() {
   document.getElementById('rework-error').textContent = '';
   document.getElementById('rework-serial').value = '';
   document.getElementById('rework-datetime').value = '';
   document.getElementById('rework-text-display').textContent = REWORK_DEFAULT_MSG;
+}
+
+function resetReworkForm() {
+  clearReworkSerial();
+  reworkRetained = { reworker: false, actionTaken: false };
   document.getElementById('rework-action-taken').value = '';
   document.getElementById('rework-pic').value = '';
   document.getElementById('rework-pic').readOnly = true;
@@ -101,8 +107,12 @@ FA FINDINGS:
     FA Class: ${r.fa_class || '–'}
     FA PIC: ${r.fa_pic || '–'}`;
 
-    document.getElementById('rework-pic').value = r.repairer || '';
-    ensureReworkOption('rework-action-taken', r.action_taken);
+    if (!reworkRetained.reworker) {
+      document.getElementById('rework-pic').value = r.repairer || '';
+    }
+    if (!reworkRetained.actionTaken) {
+      ensureReworkOption('rework-action-taken', r.action_taken);
+    }
   } catch (e) {
     err.textContent = 'Could not reach server: ' + e.message;
   }
@@ -116,6 +126,13 @@ document.getElementById('btn-rework-pic-change').addEventListener('click', () =>
   document.getElementById('rework-text-display').textContent = inp.readOnly
     ? REWORK_DEFAULT_MSG
     : 'Enter the reworker\'s employee number, then select the action taken.';
+});
+
+document.getElementById('rework-pic').addEventListener('input', () => {
+  reworkRetained.reworker = true;
+});
+document.getElementById('rework-action-taken').addEventListener('change', () => {
+  reworkRetained.actionTaken = true;
 });
 
 // ── SUBMIT ────────────────────────────────────────────────────────────────────
@@ -141,7 +158,9 @@ document.getElementById('btn-rework-submit').addEventListener('click', async () 
   const json = await res.json();
   if (json.ok) {
     if (typeof loadAndRender === 'function') loadAndRender();
-    resetReworkForm();
+    reworkRetained = { reworker: true, actionTaken: true };
+    clearReworkSerial();
+    document.getElementById('rework-serial').focus();
   } else {
     err.textContent = json.error || 'Failed to update repair status.';
   }

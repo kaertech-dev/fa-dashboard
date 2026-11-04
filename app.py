@@ -896,7 +896,6 @@ def get_open_fa():
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
 
-
 @app.route("/api/hide_dates", methods=["GET"])
 @require_login
 def get_hide_dates():
