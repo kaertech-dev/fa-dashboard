@@ -26,6 +26,8 @@ let endorsementStationLogRef = null;
 let endorsementRetainedFailureMode = null;
 let endorsementFailureModeCarried = false;
 let endorsementCurrentStationLogHasBlankRemarks = false;
+let endorsementScannedSerial = '';
+let endorsementAlreadySubmitted = false;
 
 function closeEndorsementModal() {
   document.getElementById('modal-endorsement').style.display = 'none';
@@ -37,6 +39,8 @@ function isEndorsementStationEditable() {
   return group === 'FA' || group === 'ADMIN';
 }
 function resetEndorsementForm() {
+  endorsementScannedSerial = '';
+  endorsementAlreadySubmitted = false;
   endorsementRetainedFailureMode = null;
   endorsementFailureModeCarried = false;
   endorsementCurrentStationLogHasBlankRemarks = false;
@@ -227,6 +231,10 @@ document.getElementById('endorsement-serial').addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); scanEndorsementSerial(); }
 });
 document.getElementById('endorsement-serial').addEventListener('blur', scanEndorsementSerial);
+document.getElementById('endorsement-serial').addEventListener('input', () => {
+  endorsementScannedSerial = '';
+  endorsementAlreadySubmitted = false;
+});
 document.getElementById('endorsement-failure-mode').addEventListener('input', () => {
   if (endorsementFailureModeCarried) {
     endorsementFailureModeCarried = false;
@@ -245,6 +253,7 @@ async function scanEndorsementSerial() {
   endorsementStationLogRef = null;
   endorsementCurrentStationLogHasBlankRemarks = false;
   if (!serial) return;
+  if (endorsementScannedSerial === serial) return;
   setEndorsementFailureMode(
     endorsementRetainedFailureMode || '',
     Boolean(endorsementRetainedFailureMode)
@@ -260,6 +269,8 @@ async function scanEndorsementSerial() {
 
     if (json.found) {
       const r = json.row;
+      endorsementScannedSerial = serial;
+      endorsementAlreadySubmitted = true;
       const savedFailureMode = String(r.test_failure || '').trim();
       const retainedFailureMode = endorsementRetainedFailureMode || '';
       setEndorsementFailureMode(
@@ -301,6 +312,7 @@ You can review/update the details (Station is editable) and endorse again.`;
     const logJson = await logRes.json();
 
     if (!logJson.ok) {
+      endorsementScannedSerial = serial;
       document.getElementById('endorsement-text-display').textContent =
         'New serial number. Could not search station logs: ' + (logJson.error || 'unknown error') +
         '\nFill in the details below and press "Endorse to FA".';
@@ -309,6 +321,7 @@ You can review/update the details (Station is editable) and endorse again.`;
 
     if (logJson.found) {
       const log = logJson.log;
+      endorsementScannedSerial = serial;
       const savedFailureMode = String(log.remarks || '').trim();
       const retainedFailureMode = endorsementRetainedFailureMode || '';
       document.getElementById('endorsement-station').value = log.station || '';
@@ -352,6 +365,7 @@ The details are auto-filled. You can review and press "Endorse to FA".`;
     }
 
     setEndorsementOfflineMode(true);
+    endorsementScannedSerial = serial;
     document.getElementById('endorsement-product').value = '';
     document.getElementById('endorsement-model').value = '';
     document.getElementById('endorsement-station').value = '';
@@ -378,6 +392,13 @@ document.getElementById('btn-endorsement-submit').addEventListener('click', asyn
   err.textContent = '';
 
   const serial   = document.getElementById('endorsement-serial').value.trim();
+  if (serial && endorsementScannedSerial !== serial) {
+    await scanEndorsementSerial();
+  }
+  if (serial && endorsementScannedSerial !== serial) {
+    err.textContent = 'Could not verify this serial. Please scan it again before submitting.';
+    return;
+  }
   const productSelect = document.getElementById('endorsement-product');
   const productInput = document.getElementById('endorsement-product-input');
   const product = productSelect.style.display !== 'none' ? productSelect.value : productInput.value.trim();
@@ -394,6 +415,14 @@ document.getElementById('btn-endorsement-submit').addEventListener('click', asyn
   if (!station)  { err.textContent = 'Please enter a station.'; return; }
   if (!endorser) { err.textContent = 'Please enter the employee number of the endorser.'; return; }
   if (!failMode) { err.textContent = 'Please describe the failure mode.'; return; }
+  if (endorsementAlreadySubmitted &&
+      !window.confirm(`Serial ${serial} has already been endorsed. Do you want to update its endorsement details?`)) {
+    document.getElementById('endorsement-serial').value = '';
+    endorsementScannedSerial = '';
+    endorsementAlreadySubmitted = false;
+    err.textContent = 'Endorsement update canceled; no changes were made.';
+    return;
+  }
 
   const payload = {
     serial_num:    serial,

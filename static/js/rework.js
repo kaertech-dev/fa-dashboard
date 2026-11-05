@@ -6,6 +6,8 @@ document.getElementById('btn-rework-exit').addEventListener('click', closeRework
 
 const REWORK_DEFAULT_MSG = 'Please enter the employee number of the reworker.';
 let reworkRetained = { reworker: false, actionTaken: false };
+let reworkScannedSerial = '';
+let reworkAlreadySubmitted = false;
 
 function closeReworkModal() {
   document.getElementById('modal-rework').style.display = 'none';
@@ -20,6 +22,8 @@ function clearReworkSerial() {
 
 function resetReworkForm() {
   clearReworkSerial();
+  reworkScannedSerial = '';
+  reworkAlreadySubmitted = false;
   reworkRetained = { reworker: false, actionTaken: false };
   document.getElementById('rework-action-taken').value = '';
   document.getElementById('rework-pic').value = '';
@@ -70,12 +74,17 @@ document.getElementById('rework-serial').addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); scanReworkSerial(); }
 });
 document.getElementById('rework-serial').addEventListener('blur', scanReworkSerial);
+document.getElementById('rework-serial').addEventListener('input', () => {
+  reworkScannedSerial = '';
+  reworkAlreadySubmitted = false;
+});
 
 async function scanReworkSerial() {
   const err    = document.getElementById('rework-error');
   const serial = document.getElementById('rework-serial').value.trim();
   err.textContent = '';
   if (!serial) return;
+  if (reworkScannedSerial === serial) return;
 
   try {
     const res  = await fetch(APP_ROOT + '/api/rework/lookup/' + encodeURIComponent(serial));
@@ -87,6 +96,10 @@ async function scanReworkSerial() {
       return;
     }
     const r = json.row;
+    reworkScannedSerial = serial;
+    reworkAlreadySubmitted = Boolean(
+      r.repaired_datetime || Number(r.farepair_status) >= 3
+    );
     document.getElementById('rework-datetime').value = formatReworkDate(r.faendorse_datetime);
     document.getElementById('rework-text-display').textContent =
     `UUT DETAILS:
@@ -141,12 +154,28 @@ document.getElementById('btn-rework-submit').addEventListener('click', async () 
   err.textContent = '';
 
   const serial      = document.getElementById('rework-serial').value.trim();
+  if (serial && reworkScannedSerial !== serial) {
+    await scanReworkSerial();
+  }
+  if (serial && reworkScannedSerial !== serial) {
+    err.textContent = 'Could not verify this serial. Please scan it again before submitting.';
+    return;
+  }
   const reworker     = document.getElementById('rework-pic').value.trim();
   const actionTaken = document.getElementById('rework-action-taken').value;
 
   if (!serial)      { err.textContent = 'Please scan a valid serial number.'; return; }
   if (!reworker)     { err.textContent = 'Please enter the employee number of the reworker.'; return; }
   if (!actionTaken) { err.textContent = 'Please select an action taken.'; return; }
+  if (reworkAlreadySubmitted &&
+      !window.confirm(`Serial ${serial} has already been reworked. Do you want to update its rework details?`)) {
+    clearReworkSerial();
+    reworkScannedSerial = '';
+    reworkAlreadySubmitted = false;
+    err.textContent = 'Rework update canceled; no changes were made.';
+    document.getElementById('rework-serial').focus();
+    return;
+  }
 
   const payload = { serial_num: serial, reworker: reworker, action_taken: actionTaken };
 
@@ -160,6 +189,8 @@ document.getElementById('btn-rework-submit').addEventListener('click', async () 
     if (typeof loadAndRender === 'function') loadAndRender();
     reworkRetained = { reworker: true, actionTaken: true };
     clearReworkSerial();
+    reworkScannedSerial = '';
+    reworkAlreadySubmitted = false;
     document.getElementById('rework-serial').focus();
   } else {
     err.textContent = json.error || 'Failed to update repair status.';
