@@ -1386,15 +1386,8 @@ function drawBarChart(canvasId, entries, options = {}) {
     const y  = PAD_T + chartH - bH;
     const c  = options.singleColor || COLORS[i % COLORS.length];
 
-    ctx.fillStyle = c + '33';
-    const r = 3;
-    ctx.beginPath();
-    ctx.moveTo(x+r, y); ctx.lineTo(x+barW-r, y);
-    ctx.quadraticCurveTo(x+barW, y, x+barW, y+r);
-    ctx.lineTo(x+barW, y+bH); ctx.lineTo(x, y+bH); ctx.lineTo(x, y+r);
-    ctx.quadraticCurveTo(x, y, x+r, y);
-    ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = c; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = c;
+    ctx.fillRect(x, y, barW, bH);
 
     // Value on top
     ctx.fillStyle = '#111827'; ctx.font = 'bold 10px Segoe UI, sans-serif'; ctx.textAlign = 'center';
@@ -1482,21 +1475,9 @@ function drawHBarChart(canvasId, entries) {
     ctx.fillStyle = '#374151'; ctx.font = '11px Segoe UI, sans-serif'; ctx.textAlign = 'right';
     ctx.fillText(lbl, PAD_L - 8, y + barH / 2 + 4);
 
-    // Bar fill
-    ctx.fillStyle = c + '33';
-    const r = 3;
-    if (bW > r * 2) {
-      ctx.beginPath();
-      ctx.moveTo(PAD_L, y + r); ctx.lineTo(PAD_L, y + barH - r);
-      ctx.quadraticCurveTo(PAD_L, y + barH, PAD_L + r, y + barH);
-      ctx.lineTo(PAD_L + bW - r, y + barH);
-      ctx.quadraticCurveTo(PAD_L + bW, y + barH, PAD_L + bW, y + barH - r);
-      ctx.lineTo(PAD_L + bW, y + r);
-      ctx.quadraticCurveTo(PAD_L + bW, y, PAD_L + bW - r, y);
-      ctx.lineTo(PAD_L + r, y); ctx.quadraticCurveTo(PAD_L, y, PAD_L, y + r);
-      ctx.closePath(); ctx.fill();
-      ctx.strokeStyle = c; ctx.lineWidth = 1.5; ctx.stroke();
-    }
+    // Solid fill matches the Pareto trend bars.
+    ctx.fillStyle = c;
+    ctx.fillRect(PAD_L, y, bW, barH);
 
     // Value label (right of bar)
     ctx.fillStyle = '#111827'; ctx.font = 'bold 11px Segoe UI, sans-serif'; ctx.textAlign = 'left';
