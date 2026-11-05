@@ -185,7 +185,7 @@ def update_fa(serial_num: str, fields: dict):
 
             cur.execute(
                 """
-                SELECT fa_case
+                SELECT fa_case, farepair_status
                 FROM fa.main
                 WHERE serial_num = %s
                 LIMIT 1 FOR UPDATE
@@ -194,6 +194,12 @@ def update_fa(serial_num: str, fields: dict):
             )
             existing = cur.fetchone()
             if existing is None:
+                return False
+            try:
+                status = int(existing.get("farepair_status"))
+            except (TypeError, ValueError):
+                return False
+            if status != 1:
                 return False
 
             update_fields = {key: value for key, value in fields.items() if key in allowed}
@@ -233,43 +239,43 @@ def update_fa(serial_num: str, fields: dict):
     return True
 
 def update_rework(serial_num: str, fields: dict):
-    """Update the editable rework/repair fields for a given serial number."""
+    """Apply a rework or return update only at its expected workflow stage."""
     allowed = {
         "repairer", "action_taken", "repaired_datetime","returned_datetime", "farepair_status",
     }
     set_cols = [k for k in fields if k in allowed]
     if not set_cols:
         return False
+    try:
+        target_status = int(fields.get("farepair_status"))
+    except (TypeError, ValueError):
+        return False
+    expected_status = {3: 2, 4: 3}.get(target_status)
+    if expected_status is None:
+        return False
 
     conn = get_fa_conn()
     try:
         with conn.cursor() as cur:
+            cur.execute(
+                "SELECT farepair_status FROM fa.main "
+                "WHERE serial_num = %s LIMIT 1 FOR UPDATE",
+                (serial_num,),
+            )
+            existing = cur.fetchone()
+            try:
+                current_status = int(existing.get("farepair_status")) if existing else None
+            except (TypeError, ValueError):
+                current_status = None
+            if current_status != expected_status:
+                conn.rollback()
+                return False
+
             set_clause = ", ".join(f"{c} = %s" for c in set_cols)
             values = [fields[c] for c in set_cols] + [serial_num]
             cur.execute(
                 f"UPDATE fa.main SET {set_clause} WHERE serial_num = %s",
                 values,
-            )
-            conn.commit()
-    finally:
-        conn.close()
-    return True
-
-def return_rework(serial_num: str, fields: dict):
-    allowed = {
-        "returned_datetime", "farepair_status"
-    }
-
-    set_cols = [k for k in fields if k in allowed]
-    if not set_cols:
-        return False
-    conn = get_fa_conn()
-    try:
-        with conn.cursor() as cur:
-            set_clause = ", ".join(f"{c} = %s" for c in set_cols)
-            values = [fields[c] for c in set_cols] + [serial_num]
-            cur.execute(f"UPDATE fa.main SET {set_clause} WHERE serial_num = %s",
-            values,
             )
             conn.commit()
     finally:

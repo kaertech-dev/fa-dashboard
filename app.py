@@ -460,7 +460,11 @@ def update_fa_route():
         row = get_fa_by_serial(serial_num)
         if row is None:
             return jsonify({"ok": False, "error": "Serial number not found."})
-        update_fa(serial_num, fields)
+        if not update_fa(serial_num, fields):
+            return jsonify({
+                "ok": False,
+                "error": "Failure Analysis can only be submitted while this serial is awaiting FA (status 1).",
+            }), 409
         updated_row = get_fa_by_serial(serial_num)
         save_fa_url(updated_row["fa_case"], document_url)
         return jsonify({"ok": True})
@@ -545,7 +549,11 @@ def update_rework_route():
         row = get_fa_by_serial(serial_num)
         if row is None:
             return jsonify({"ok": False, "error": "Serial number not found."})
-        update_rework(serial_num, fields)
+        if not update_rework(serial_num, fields):
+            return jsonify({
+                "ok": False,
+                "error": "Rework can only be submitted after Failure Analysis is complete (status 2).",
+            }), 409
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
@@ -587,7 +595,11 @@ def return_rework():
         row = get_fa_by_serial(serial_num)
         if row is None:
             return jsonify({"ok": False, "error": "Serial number not found."})
-        update_rework(serial_num, fields)
+        if not update_rework(serial_num, fields):
+            return jsonify({
+                "ok": False,
+                "error": "Return can only be submitted after rework is complete (status 3).",
+            }), 409
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
