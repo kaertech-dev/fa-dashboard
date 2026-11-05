@@ -124,7 +124,7 @@ main { padding: 28px; max-width: 1400px; margin: 0 auto; }
 }
 .filter-group { display: flex; flex-direction: column; gap: 5px; }
 .filter-group label { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
-.filter-group select, .filter-group input[type=date] {
+.filter-group select, .filter-group input[type=date], .filter-group input[type=text] {
   background: var(--bg); 
   border: 1px solid var(--border); 
   border-radius: 6px;
@@ -135,7 +135,40 @@ main { padding: 28px; max-width: 1400px; margin: 0 auto; }
   min-width: 160px; 
   cursor: pointer;
 }
-.filter-group select:focus, .filter-group input[type=date]:focus { border-color: var(--accent3); }
+.filter-group select:focus, .filter-group input[type=date]:focus, .filter-group input[type=text]:focus { border-color: var(--accent3); }
+.date-picker { position: relative; }
+.date-picker > input { min-width: 160px; }
+.date-picker-popover {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 20;
+  width: 280px; padding: 12px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.14);
+}
+.date-picker-popover[hidden] { display: none; }
+.date-picker-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.date-picker-header strong { font-size: .9rem; }
+.date-picker-nav {
+  width: 30px; height: 30px; border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); background: var(--surface2); font-size: 1.15rem; cursor: pointer;
+}
+.date-picker-nav:hover { border-color: var(--accent3); }
+.date-picker-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; text-align: center; }
+.date-picker-weekdays { margin-bottom: 4px; color: var(--muted); font-size: .7rem; font-weight: 600; }
+.date-picker-weekdays span { padding: 5px 0; }
+.date-picker-day {
+  position: relative; min-width: 0; height: 32px; border: 1px solid transparent;
+  border-radius: 6px; color: var(--text); background: transparent; font-size: .78rem; cursor: pointer;
+}
+.date-picker-day:hover:not(:disabled) { background: var(--surface2); border-color: var(--border); }
+.date-picker-day.has-data::after {
+  position: absolute; bottom: 3px; left: 50%; width: 4px; height: 4px;
+  border-radius: 50%; background: var(--accent3); content: ''; transform: translateX(-50%);
+}
+.date-picker-day.selected { color: #fff; background: var(--accent3); }
+.date-picker-day.selected.has-data::after { background: #fff; }
+.date-picker-day:disabled { color: #c4c9d1; cursor: not-allowed; }
+.date-picker-legend { display: flex; align-items: center; gap: 7px; margin-top: 10px; color: var(--muted); font-size: .72rem; }
+.date-picker-legend span { width: 6px; height: 6px; border-radius: 50%; background: var(--accent3); }
 .btn-apply {
   padding: 8px 20px; background: var(--accent2); border: none; border-radius: 6px;
   color: #fff; font-weight: 600; font-size: -0.12rem; cursor: pointer; transition: opacity .2s;
@@ -185,16 +218,14 @@ main { padding: 28px; max-width: 1400px; margin: 0 auto; }
 .kpi-label { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 8px; }
 .kpi-val   { font-size: 2rem; font-weight: 700; line-height: 1; }
 .kpi-sub   { font-size: .78rem; color: var(--muted); margin-top: 6px; }
-.monthly-status { margin: 0 0 24px; }
-.monthly-status .kpi-row { margin-bottom: 8px; }
-.monthly-status .section-title span { margin-left: 6px; color: var(--text); }
-.monthly-status-note { color: var(--muted); font-size: .76rem; }
 .fa-document-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .fa-document-links a { color: var(--accent3); overflow-wrap: anywhere; }
 
 /* ── CHARTS ── */
 .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
 .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px 22px; }
+.chart-card canvas { display: block; width: 100%; max-width: 100%; }
+#chart-product, #chart-station { height: 220px; }
 .section-title { font-size: .9rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 12px; }
 .fa-meantime {
   display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;

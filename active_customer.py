@@ -271,14 +271,20 @@ class StationLog:
 
         order_col = dt_col or self._pick(columns, ['id'])
         order_sql = f"ORDER BY {_quote_identifier(order_col)} DESC" if order_col else ""
+        serial_values = [serial_num, *(f"{serial_num}_{attempt}" for attempt in (1, 2, 3))]
 
         try:
             with projects_engine.connect() as conn:
                 sql = (
                     f"SELECT * FROM {_quote_identifier(schema_id)}.{_quote_identifier(table)} "
-                    f"WHERE {_quote_identifier(serial_col)} = :serial {order_sql} LIMIT 1"
+                    f"WHERE {_quote_identifier(serial_col)} "
+                    "IN (:serial_0, :serial_1, :serial_2, :serial_3) "
+                    f"{order_sql} LIMIT 1"
                 )
-                result = conn.execute(text(sql), {"serial": serial_num})
+                result = conn.execute(
+                    text(sql),
+                    {f"serial_{index}": value for index, value in enumerate(serial_values)},
+                )
                 row = result.mappings().fetchone()
         except Exception as e:
             print(f"[StationLog] query '{schemadb}'.'{table}': {e}")
@@ -302,10 +308,11 @@ class StationLog:
             "product":      schemadb,
             "model":        model,
             "station":      station,
+            "source_serial_num": str(row.get(serial_col) or serial_num),
             "remarks":      (row.get(remarks_col) if remarks_col else None) or "",
             "log_datetime": str(row.get(dt_col)) if dt_col and row.get(dt_col) else None,
             "po_num":       (row.get(po_col) if po_col else None) or "",
-            "row_locator":  row_locator,
+            "row_locator": row_locator,
         }
 
     def find_last_log(self, serial_num):
@@ -338,6 +345,60 @@ class StationLog:
 
         matches.sort(key=lambda m: m.get("log_datetime") or "", reverse=True)
         return matches[0]
+
+    def get_failure_attempts(self, serial_num, product, model, station):
+        """Return the highest failed-attempt suffix recorded for a unit."""
+        projects = {
+            project["id"] for project in self._active.get_active_products()
+        }
+        if product not in projects:
+            raise ValueError("Unknown active product.")
+
+        models = {
+            item["id"] for item in self._active.get_models_by_product(product)
+        }
+        if model not in models:
+            raise ValueError("Unknown model for the selected product.")
+
+        stations = {
+            item["id"] for item in self._active.get_stations_by_model(product, model)
+        }
+        if station not in stations:
+            raise ValueError("Unknown station for the selected model.")
+
+        table = f"{model}_{station}"
+        columns = self._columns(product, table)
+        serial_col = self._pick(columns, self._SERIAL_CANDIDATES)
+        if not serial_col:
+            return 0
+
+        failed_serials = [f"{serial_num}_{attempt}" for attempt in (1, 2, 3)]
+        try:
+            with projects_engine.connect() as conn:
+                result = conn.execute(
+                    text(
+                        f"SELECT DISTINCT {_quote_identifier(serial_col)} "
+                        f"FROM {_quote_identifier(product)}.{_quote_identifier(table)} "
+                        f"WHERE {_quote_identifier(serial_col)} IN "
+                        "(:failed_1, :failed_2, :failed_3)"
+                    ),
+                    {
+                        f"failed_{attempt}": failed_serials[attempt - 1]
+                        for attempt in (1, 2, 3)
+                    },
+                )
+                found_serials = {str(row[0]) for row in result}
+        except Exception as e:
+            raise RuntimeError(f"Could not check failed attempts for serial '{serial_num}'.") from e
+
+        return max(
+            (
+                attempt
+                for attempt, failed_serial in enumerate(failed_serials, start=1)
+                if failed_serial in found_serials
+            ),
+            default=0,
+        )
         
     def update_remarks(self, schemadb, model, station, serial_num, remarks, row_locator):
         """

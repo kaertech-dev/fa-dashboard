@@ -301,12 +301,16 @@ def create_or_update_endorsement(serial_num: str, fields: dict):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT serial_num FROM fa.main WHERE serial_num = %s LIMIT 1",
+                "SELECT farepair_status FROM fa.main "
+                "WHERE serial_num = %s LIMIT 1 FOR UPDATE",
                 (serial_num,),
             )
-            exists = cur.fetchone()
+            existing = cur.fetchone()
 
-            if exists:
+            if existing:
+                status = existing.get("farepair_status")
+                if status is None or int(status) != 1:
+                    return False
                 set_clause = ", ".join(f"{c} = %s" for c in fields)
                 values = list(fields.values()) + [serial_num]
                 cur.execute(

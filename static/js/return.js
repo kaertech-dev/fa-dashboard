@@ -76,8 +76,11 @@ async function scanReturnSerial() {
       r.returned_datetime || Number(r.farepair_status) === 4
     );
     document.getElementById('return-datetime').value = formatReturnDate(r.repaired_datetime || r.faendorse_datetime);
-    document.getElementById('return-text-display').textContent =
-    `UUT DETAILS:
+    const returnStatus = Number(r.farepair_status);
+    document.getElementById('return-text-display').textContent = returnStatus >= 4
+      ? `This serial has already completed Return. ${faWorkflowStageLabel(returnStatus)}. Endorsement, Failure Analysis, and Rework details are hidden.`
+      : `${faWorkflowStageLabel(returnStatus)}
+    UUT DETAILS:
     Product: ${r.product || '–'}
     Model: ${r.model || '–'}
     PO: ${r.po_num || '–'}
@@ -85,6 +88,7 @@ async function scanReturnSerial() {
     Test Failure: ${r.test_failure || '–'}
     Endorsed By: ${r.prod_endorser || '–'}
     Endorsement Date & Time: ${formatReturnDate(r.faendorse_datetime)}
+
 
 FA FINDINGS:
     Failure Cause: ${r.failure_cause || '–'}

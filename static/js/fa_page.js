@@ -139,8 +139,11 @@ async function scanFaSerial() {
       r.document_urls || [],
       'No documents saved for this FA case.'
     );
-    document.getElementById('fa-text-display').textContent =
-    `UUT DETAILS:
+    const faStatus = Number(r.farepair_status);
+    document.getElementById('fa-text-display').textContent = faStatus >= 2
+      ? `This serial has already completed Failure Analysis. ${faWorkflowStageLabel(faStatus)}. Failure Analysis details are hidden.`
+      : `${faWorkflowStageLabel(faStatus)}
+    UUT DETAILS:
 
     Product: ${r.product || '–'}
     Model: ${r.model || '–'}
@@ -148,7 +151,8 @@ async function scanFaSerial() {
     Station: ${r.station || '–'}
     Test Failure: ${r.test_failure || '–'}
     Endorsed By: ${r.prod_endorser || '–'}
-    Endorsement Date & Time: ${formatDate(r.faendorse_datetime)}`;
+    Endorsement Date & Time: ${formatDate(r.faendorse_datetime)}
+    `;
 
     const faFields = [
       { id: 'fa-failure-cause', label: 'cause of failure', value: r.failure_cause },

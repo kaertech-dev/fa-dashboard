@@ -8,11 +8,12 @@ let runUnitsController = null;
 let lastRunUnitsValue = null;
 let availableDashboardDates = [];
 let dataRequestId = 0;
+let activeDatePicker = null;
 let failureDocumentsRequest = 0;
 let dashboardAttachmentSerial = '';
 let dashboardAttachmentCase = '';
 let dashboardAttachmentSaving = false;
-let monthlyStatus = { open: 0, in_progress: 0, reworked: 0, closed: 0 };
+let monthlyStatus = { open: 0, in_progress: 0, reworked: 0, closed: 0, month: 'This month' };
 const PAGE_SIZE = 50;
 const COLORS = ['#f78166','#79c0ff','#56d364','#d29922','#bc8cff','#58a6ff','#ff7b72','#39d353','#ffa657','#a5d6ff'];
 
@@ -75,6 +76,15 @@ function statusLabel(v) {
   if (v == 3) return 'REWORKED';
   if (v == 4) return 'CLOSED';
   return '';
+}
+function faWorkflowStageLabel(status) {
+  const stages = {
+    1: 'Already endorsed; awaiting Failure Analysis',
+    2: 'Already endorsed and processed by Failure Analysis; awaiting rework',
+    3: 'Already endorsed, processed by Failure Analysis, and reworked; awaiting return',
+    4: 'Already endorsed, processed by Failure Analysis, reworked, and returned',
+  };
+  return stages[Number(status)] || 'FA workflow stage is unknown';
 }
 function statusTag(v) {
   if (v == 1) return `<span class="tag tag-open">OPEN</span>`;
@@ -644,10 +654,9 @@ document.getElementById('btn-chpass-submit').addEventListener('click', async () 
   }
 });
 
-// Computes the default date range on load: the 1st of the current calendar
-// month through today, clamped to whatever FA dates actually exist (via
-// availableDashboardDates, which is already filtered server-side by any
-// per-user dataeffective_datetime restriction).
+// Computes the default date range from the available FA records in the current
+// month. Empty dates keep the dashboard empty when this month has no records,
+// rather than showing a misleading previous month's data.
 function getCurrentMonthDefaultRange() {
   const now = new Date();
   const year = now.getFullYear();
@@ -664,10 +673,7 @@ function getCurrentMonthDefaultRange() {
     };
   }
 
-  // No FA records yet this month (e.g. brand-new month, or all filtered by
-  // dataeffective_datetime) — fall back to the previous single-most-recent-date behavior.
-  const fallback = availableDashboardDates[0] || '';
-  return { from: fallback, to: fallback };
+  return { from: '', to: '' };
 }
 
 // ── DATA ──────────────────────────────────────────────────────────────────────
@@ -683,12 +689,10 @@ async function loadAndRender() {
     if (!datesJson.ok) throw new Error(datesJson.error || 'Failed to load available dates.');
     availableDashboardDates = Array.isArray(datesJson.dates) ? datesJson.dates : [];
 
-    const storedDates = getStoredDateRange();
+    refreshCascadingFilters();
     const defaultRange = getCurrentMonthDefaultRange();
-    const selectedFrom = storedDates.from || defaultRange.from;
-    const selectedTo = storedDates.to || defaultRange.to;
-    document.getElementById('f-from').value = selectedFrom;
-    document.getElementById('f-to').value = selectedTo;
+    document.getElementById('f-from').value = defaultRange.from;
+    document.getElementById('f-to').value = defaultRange.to;
     const res = await fetchDataForSelectedDates();
 
     if (!res.ok) {
@@ -706,6 +710,7 @@ async function loadAndRender() {
 
     populateFilters();
     restoreFilterState();
+    saveFilterState();
     applyFilters();
 
   } catch (e) {
@@ -754,15 +759,6 @@ async function refreshData() {
     console.error('[FA Dashboard] Auto-refresh failed:', e);
   } finally {
     isRefreshing = false;
-  }
-}
-
-function getStoredDateRange() {
-  try {
-    const state = JSON.parse(localStorage.getItem(getFilterStorageKey()) || '{}');
-    return { from: state['f-from'] || '', to: state['f-to'] || '' };
-  } catch (e) {
-    return { from: '', to: '' };
   }
 }
 
@@ -850,8 +846,6 @@ function restoreFilterState() {
   document.getElementById('f-station').value = station;
   document.getElementById('f-status').value = state['f-status'] || '';
   refreshCascadingFilters();
-  document.getElementById('f-from').value = state['f-from'] || '';
-  document.getElementById('f-to').value = state['f-to'] || '';
   refreshCascadingFilters();
 }
 
@@ -877,36 +871,141 @@ function getAvailableDates(rows) {
     .filter(Boolean))].sort((a,b) => b.localeCompare(a));
 }
 
-function refreshDateFilters(baseRows = allData) {
-  const fromSelect = document.getElementById('f-from');
-  const toSelect = document.getElementById('f-to');
-  const currentFrom = fromSelect.value;
-  const currentTo = toSelect.value;
-
-  const availableDates = availableDashboardDates.length
-    ? availableDashboardDates
-    : getAvailableDates(baseRows);
-
-  const validFrom = currentFrom && availableDates.includes(currentFrom)
-    ? currentFrom
-    : '';
-  const validTo = currentTo && availableDates.includes(currentTo)
-    ? currentTo
-    : '';
-
-  const fromOptions = availableDates.filter(date => !validTo || date <= validTo);
-  const toOptions = availableDates.filter(date => !validFrom || date >= validFrom);
-
-  fillSelect('f-from', fromOptions, validFrom);
-  fillSelect('f-to', toOptions, validTo);
-
-  const finalFrom = document.getElementById('f-from').value;
-  const finalTo = document.getElementById('f-to').value;
-
-  if (finalFrom && finalTo && finalFrom > finalTo) {
-    document.getElementById('f-to').value = finalFrom;
-  }
+function refreshDateFilters() {
+  const fromInput = document.getElementById('f-from');
+  const toInput = document.getElementById('f-to');
+  fromInput.max = toInput.value || '';
+  toInput.min = fromInput.value || '';
+  document.querySelectorAll('.date-picker-popover:not([hidden])').forEach(popover => {
+    renderDatePicker(popover.closest('.date-picker'));
+  });
 }
+
+function formatDatePickerValue(value) {
+  if (!value) return '';
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(year, month - 1, day).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+function getLocalDateString(date = new Date()) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0'),
+  ].join('-');
+}
+
+function renderDatePicker(picker) {
+  if (!picker) return;
+  const input = document.getElementById(picker.dataset.datePicker);
+  const popover = picker.querySelector('.date-picker-popover');
+  const monthLabel = picker.querySelector('.date-picker-month');
+  const daysContainer = picker.querySelector('.date-picker-days');
+  const [year, month] = (picker.dataset.viewMonth || input.value || getLocalDateString())
+    .split('-').map(Number);
+  const monthDate = new Date(year, month - 1, 1);
+  const monthStart = new Date(year, month - 1, 1).getDay();
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const selectedDate = input.value;
+  const minimum = input.min;
+  const maximum = input.max;
+
+  monthLabel.textContent = monthDate.toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'long',
+  });
+  daysContainer.replaceChildren();
+
+  for (let blank = 0; blank < monthStart; blank += 1) {
+    daysContainer.appendChild(document.createElement('span'));
+  }
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const date = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'date-picker-day';
+    button.textContent = String(day);
+    button.dataset.date = date;
+    button.setAttribute('aria-label', formatDatePickerValue(date));
+    if (availableDashboardDates.includes(date)) {
+      button.classList.add('has-data');
+      button.title = 'Has data';
+    }
+    if (date === selectedDate) {
+      button.classList.add('selected');
+      button.setAttribute('aria-pressed', 'true');
+    }
+    if ((minimum && date < minimum) || (maximum && date > maximum)) {
+      button.disabled = true;
+    }
+    daysContainer.appendChild(button);
+  }
+  popover.dataset.month = `${year}-${String(month).padStart(2, '0')}`;
+}
+
+function closeDatePicker(picker) {
+  const popover = picker.querySelector('.date-picker-popover');
+  popover.hidden = true;
+  picker.querySelector('input').setAttribute('aria-expanded', 'false');
+  if (activeDatePicker === picker) activeDatePicker = null;
+}
+
+document.querySelectorAll('.date-picker').forEach(picker => {
+  const input = picker.querySelector('input');
+  const popover = picker.querySelector('.date-picker-popover');
+
+  input.setAttribute('aria-haspopup', 'dialog');
+  input.setAttribute('aria-expanded', 'false');
+  input.addEventListener('click', () => {
+    if (activeDatePicker && activeDatePicker !== picker) closeDatePicker(activeDatePicker);
+    const currentValue = input.value || getLocalDateString();
+    picker.dataset.viewMonth = currentValue.slice(0, 7) + '-01';
+    activeDatePicker = picker;
+    popover.hidden = false;
+    input.setAttribute('aria-expanded', 'true');
+    renderDatePicker(picker);
+  });
+  input.addEventListener('keydown', event => {
+    if (['Enter', ' ', 'ArrowDown'].includes(event.key)) {
+      event.preventDefault();
+      input.click();
+    }
+  });
+
+  picker.querySelectorAll('.date-picker-nav').forEach(button => {
+    button.addEventListener('click', () => {
+      const currentMonth = popover.dataset.month || getLocalDateString().slice(0, 7);
+      const [year, month] = currentMonth.split('-').map(Number);
+      const nextMonth = new Date(year, month - 1 + Number(button.dataset.monthOffset), 1);
+      picker.dataset.viewMonth = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
+      renderDatePicker(picker);
+    });
+  });
+
+  picker.querySelector('.date-picker-days').addEventListener('click', event => {
+    const dayButton = event.target.closest('button[data-date]');
+    if (!dayButton || dayButton.disabled) return;
+    input.value = dayButton.dataset.date;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    closeDatePicker(picker);
+  });
+});
+
+document.addEventListener('click', event => {
+  if (activeDatePicker && !activeDatePicker.contains(event.target)) {
+    closeDatePicker(activeDatePicker);
+  }
+});
+
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && activeDatePicker) {
+    closeDatePicker(activeDatePicker);
+  }
+});
 
 function refreshCascadingFilters() {
   const productSelect = document.getElementById('f-product');
@@ -934,7 +1033,7 @@ function refreshCascadingFilters() {
     ? modelRows.filter(record => record.station === stationSelect.value)
     : modelRows;
 
-  refreshDateFilters(stationRows);
+  refreshDateFilters();
 }
 
 document.getElementById('f-product').addEventListener('change', () => {
@@ -979,14 +1078,7 @@ document.getElementById('f-to').addEventListener('change', () => {
 
 document.getElementById('btn-apply').addEventListener('click',  () => { page=1; saveFilterState(); applyFilters(); });
 document.getElementById('btn-today').addEventListener('click', () => {
-  const now = new Date();
-  const today = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-');
-
-  // Today may have production scans but no FA records yet. Keep it as a
-  // selectable date so the Run Units KPI can still query production data.
-  if (!availableDashboardDates.includes(today)) {
-    availableDashboardDates = [today, ...availableDashboardDates].sort((a, b) => b.localeCompare(a));
-  }
+  const today = getLocalDateString();
 
   document.getElementById('f-from').value = today;
   document.getElementById('f-to').value = today;
@@ -1062,13 +1154,17 @@ function getRowsForCurrentSelection() {
 // ── KPIs ──────────────────────────────────────────────────────────────────────
 function renderKPIs() {
   document.getElementById('kpi-total').textContent    = filteredData.length.toLocaleString();
-  document.getElementById('kpi-open').textContent     = filteredData.filter(r=>r.farepair_status==1).length.toLocaleString();
-  document.getElementById('kpi-wip').textContent      = filteredData.filter(r=>r.farepair_status==2).length.toLocaleString();
-  document.getElementById('kpi-reworked').textContent = filteredData.filter(r=>r.farepair_status==3).length.toLocaleString();
-  document.getElementById('kpi-closed').textContent   = filteredData.filter(r=>r.farepair_status==4).length.toLocaleString();
+  document.getElementById('filtered-kpi-open').textContent =
+    `${monthlyStatus.month} · Selected filters: ${filteredData.filter(r=>r.farepair_status==1).length.toLocaleString()}`;
+  document.getElementById('filtered-kpi-wip').textContent =
+    `${monthlyStatus.month} · Selected filters: ${filteredData.filter(r=>r.farepair_status==2).length.toLocaleString()}`;
+  document.getElementById('filtered-kpi-reworked').textContent =
+    `${monthlyStatus.month} · Selected filters: ${filteredData.filter(r=>r.farepair_status==3).length.toLocaleString()}`;
+  document.getElementById('filtered-kpi-closed').textContent =
+    `${monthlyStatus.month} · Selected filters: ${filteredData.filter(r=>r.farepair_status==4).length.toLocaleString()}`;
   document.getElementById('kpi-products').textContent = new Set(filteredData.map(r=>r.product).filter(Boolean)).size;
   if (lastRunUnitsValue === null) {
-    document.getElementById('kpi-run-units').textContent = '–';
+    document.getElementById('kpi-run-units').textContent = 'loading...';
   }
 }
 
@@ -1085,11 +1181,11 @@ function updateMonthlyStatus(status) {
   const monthLabel = year && month
     ? new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
     : 'Current Month';
-  document.getElementById('monthly-kpi-month').textContent = monthLabel;
-  document.getElementById('monthly-kpi-open').textContent = monthlyStatus.open.toLocaleString();
-  document.getElementById('monthly-kpi-in-progress').textContent = monthlyStatus.in_progress.toLocaleString();
-  document.getElementById('monthly-kpi-reworked').textContent = monthlyStatus.reworked.toLocaleString();
-  document.getElementById('monthly-kpi-closed').textContent = monthlyStatus.closed.toLocaleString();
+  monthlyStatus.month = monthLabel;
+  document.getElementById('kpi-open').textContent = monthlyStatus.open.toLocaleString();
+  document.getElementById('kpi-wip').textContent = monthlyStatus.in_progress.toLocaleString();
+  document.getElementById('kpi-reworked').textContent = monthlyStatus.reworked.toLocaleString();
+  document.getElementById('kpi-closed').textContent = monthlyStatus.closed.toLocaleString();
 }
 
 async function loadMonthlyStatus() {
@@ -1111,7 +1207,7 @@ async function updateRunUnitsKpi() {
   const to = document.getElementById('f-to').value;
   if (!from && !to) {
     lastRunUnitsValue = null;
-    document.getElementById('kpi-run-units').textContent = '–';
+    document.getElementById('kpi-run-units').textContent = 'loading...';
     return;
   }
   const params = new URLSearchParams({
@@ -1138,7 +1234,7 @@ async function updateRunUnitsKpi() {
   } catch (e) {
     if (e.name === 'AbortError') return;
     if (requestId === runUnitsRequest && lastRunUnitsValue === null) {
-      document.getElementById('kpi-run-units').textContent = '–';
+      document.getElementById('kpi-run-units').textContent = 'loading...';
     }
     console.error('[FA Dashboard] Run-unit count failed:', e);
   }
@@ -1179,34 +1275,6 @@ function countBy(arr, key) {
   return Object.entries(map).sort((a,b)=>b[1]-a[1]).slice(0,12);
 }
 
-function countByDateAndCategory(arr, key) {
-  const map = {};
-
-  arr.forEach(record => {
-    const date = String(record.faendorse_datetime || '').slice(0, 10);
-
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
-
-    const category = String(record[key] || 'Unknown').trim() || 'Unknown';
-    const label = `${date} | ${category}`;
-
-    map[label] = (map[label] || 0) + 1;
-  });
-
-  return Object.entries(map)
-    .sort((a, b) => {
-      const [aDate, aCategory] = a[0].split(' | ');
-      const [bDate, bCategory] = b[0].split(' | ');
-
-      if (aDate === bDate) {
-        return b[1] - a[1] || aCategory.localeCompare(bCategory);
-      }
-
-      return aDate.localeCompare(bDate);
-    })
-    .slice(0, 12);
-}
-
 function formatChartLabel(label) {
   const value = String(label || '');
 
@@ -1231,8 +1299,8 @@ function parseChartLabel(label) {
 
   if (!text.includes(' | ')) {
     return {
-      date: text,
-      category: ''
+      date: '',
+      category: text
     };
   }
 
@@ -1247,12 +1315,12 @@ function parseChartLabel(label) {
 function showChartMatches(chartKey, label) {
   const { date, category } = parseChartLabel(label);
 
-  if (!date || !category) return;
+  if (!category) return;
 
   const matches = filteredData.filter(record => {
     const recordDate = String(record.faendorse_datetime || '').slice(0, 10);
 
-    if (recordDate !== date) return false;
+    if (date && recordDate !== date) return false;
 
     const recordValue =
       String(record[chartKey] || 'Unknown').trim() || 'Unknown';
@@ -1266,7 +1334,7 @@ function showChartMatches(chartKey, label) {
   };
 
   renderFailureList(
-    `${titleMap[chartKey] || 'Category'} — ${formatChartLabel(date)} (${category})`,
+    `${titleMap[chartKey] || 'Category'}${date ? ` — ${formatChartLabel(date)}` : ''} (${category})`,
     matches
   );
 }
@@ -1275,11 +1343,11 @@ function drawBarChart(canvasId, entries, options = {}) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
   const dpr    = window.devicePixelRatio || 1;
-  const W      = canvas.parentElement.clientWidth - 44;
+  const W      = Math.max(280, canvas.parentElement.clientWidth - 4);
   const H      = options.height || 220;
   canvas.width  = W * dpr;
   canvas.height = H * dpr;
-  canvas.style.width  = W + 'px';
+  canvas.style.width = W + 'px';
   canvas.style.height = H + 'px';
   canvas.style.cursor = entries.length ? 'pointer' : 'default';
 
@@ -1298,7 +1366,7 @@ function drawBarChart(canvasId, entries, options = {}) {
   const chartW = W - PAD_L - PAD_R;
   const chartH = H - PAD_T - PAD_B;
   const maxVal = Math.max(...entries.map(e=>e[1]));
-  const barW   = Math.max(8, (chartW / entries.length) - 6);
+  const barW   = Math.min(48, Math.max(8, (chartW / entries.length) * 0.65));
   const gap    = (chartW - barW * entries.length) / (entries.length + 1);
 
   // Grid lines + y labels
@@ -1368,12 +1436,11 @@ function drawHBarChart(canvasId, entries) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
   const dpr = window.devicePixelRatio || 1;
-  const W   = canvas.parentElement.clientWidth - 44;
+  const W   = Math.max(1, Math.floor(canvas.getBoundingClientRect().width));
   // Height scales with number of entries so bars aren't squished
   const H   = Math.max(220, entries.length * 36 + 40);
   canvas.width  = W * dpr;
   canvas.height = H * dpr;
-  canvas.style.width  = W + 'px';
   canvas.style.height = H + 'px';
 
   const ctx = canvas.getContext('2d');
@@ -1440,13 +1507,13 @@ function drawHBarChart(canvasId, entries) {
 function renderCharts() {
   drawBarChart(
     'chart-product',
-    countByDateAndCategory(filteredData, 'product'),
+    countBy(filteredData, 'product'),
     { chartKey: 'product' }
   );
 
   drawBarChart(
     'chart-station',
-    countByDateAndCategory(filteredData, 'station'),
+    countBy(filteredData, 'station'),
     { chartKey: 'station' }
   );
 
@@ -1455,6 +1522,12 @@ function renderCharts() {
 
   renderPareto();
 }
+
+let chartResizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(chartResizeTimer);
+  chartResizeTimer = setTimeout(renderCharts, 100);
+});
 
 function parseFaDateTime(value) {
   if (!value) return null;
@@ -1547,7 +1620,8 @@ function bindParetoCaseRows(container) {
 
 function drawParetoTrend(topGroups) {
   const canvas = document.getElementById('chart-pareto-trend');
-  if (!canvas) return;
+  const canvasStation = document.getElementById('chart-station');
+  if (!canvas || !canvasStation) return;
   const dpr = window.devicePixelRatio || 1;
   const W = Math.max(280, canvas.parentElement.clientWidth - 4);
   const H = 220; // taller than before to fit the legend

@@ -101,8 +101,11 @@ async function scanReworkSerial() {
       r.repaired_datetime || Number(r.farepair_status) >= 3
     );
     document.getElementById('rework-datetime').value = formatReworkDate(r.faendorse_datetime);
-    document.getElementById('rework-text-display').textContent =
-    `UUT DETAILS:
+    const reworkStatus = Number(r.farepair_status);
+    document.getElementById('rework-text-display').textContent = reworkStatus >= 3
+      ? `This serial has already completed Rework. ${faWorkflowStageLabel(reworkStatus)}. Endorsement and Failure Analysis details are hidden.`
+      : `${faWorkflowStageLabel(reworkStatus)}
+    UUT DETAILS:
     Product: ${r.product || '–'}
     Model: ${r.model || '–'}
     PO: ${r.po_num || '–'}

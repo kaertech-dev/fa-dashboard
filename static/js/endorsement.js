@@ -28,6 +28,19 @@ let endorsementFailureModeCarried = false;
 let endorsementCurrentStationLogHasBlankRemarks = false;
 let endorsementScannedSerial = '';
 let endorsementAlreadySubmitted = false;
+let endorsementExistingStatus = null;
+let endorsementFailureAttempts = null;
+
+function getEndorsementOverrideKey() {
+  const employeeNum = localStorage.getItem('fa_user_num') || 'session';
+  return `fa_endorser_override_${employeeNum}`;
+}
+
+function getEndorsementValue() {
+  return localStorage.getItem(getEndorsementOverrideKey()) ||
+    localStorage.getItem('fa_user_num') ||
+    '';
+}
 
 function closeEndorsementModal() {
   document.getElementById('modal-endorsement').style.display = 'none';
@@ -41,6 +54,8 @@ function isEndorsementStationEditable() {
 function resetEndorsementForm() {
   endorsementScannedSerial = '';
   endorsementAlreadySubmitted = false;
+  endorsementExistingStatus = null;
+  endorsementFailureAttempts = null;
   endorsementRetainedFailureMode = null;
   endorsementFailureModeCarried = false;
   endorsementCurrentStationLogHasBlankRemarks = false;
@@ -58,7 +73,7 @@ function resetEndorsementForm() {
   endorsementStationLogRef = null;
 
   const endorserInput = document.getElementById('endorsement-endorser');
-  endorserInput.value = localStorage.getItem('fa_user_num') || '';
+  endorserInput.value = getEndorsementValue();
   endorserInput.readOnly = true;
 
   setEndorsementOfflineMode(false);
@@ -234,6 +249,8 @@ document.getElementById('endorsement-serial').addEventListener('blur', scanEndor
 document.getElementById('endorsement-serial').addEventListener('input', () => {
   endorsementScannedSerial = '';
   endorsementAlreadySubmitted = false;
+  endorsementExistingStatus = null;
+  endorsementFailureAttempts = null;
 });
 document.getElementById('endorsement-failure-mode').addEventListener('input', () => {
   if (endorsementFailureModeCarried) {
@@ -254,6 +271,8 @@ async function scanEndorsementSerial() {
   endorsementCurrentStationLogHasBlankRemarks = false;
   if (!serial) return;
   if (endorsementScannedSerial === serial) return;
+  endorsementExistingStatus = null;
+  endorsementFailureAttempts = null;
   setEndorsementFailureMode(
     endorsementRetainedFailureMode || '',
     Boolean(endorsementRetainedFailureMode)
@@ -271,6 +290,8 @@ async function scanEndorsementSerial() {
       const r = json.row;
       endorsementScannedSerial = serial;
       endorsementAlreadySubmitted = true;
+      endorsementExistingStatus = Number(r.farepair_status);
+      endorsementFailureAttempts = Number(r.failure_attempts) || 0;
       const savedFailureMode = String(r.test_failure || '').trim();
       const retainedFailureMode = endorsementRetainedFailureMode || '';
       setEndorsementFailureMode(
@@ -291,18 +312,11 @@ async function scanEndorsementSerial() {
         }
       }
 
+      const stageMessage = endorsementExistingStatus >= 1
+        ? `This serial is already endorsed. ${faWorkflowStageLabel(endorsementExistingStatus)}. Endorsement details are hidden.`
+        : 'This serial has an existing FA record with an unrecognized status. Endorsement details are hidden.';
       document.getElementById('endorsement-text-display').textContent =
-`SERIAL ALREADY REGISTERED:
-
-Product: ${r.product || '–'}
-Model: ${r.model || '–'}
-Station: ${r.station || '–'}
-PO: ${r.po_num || '–'}
-Last Endorsed By: ${r.prod_endorser || '–'}
-Endorsement Date & Time: ${formatEndorsementDate(r.faendorse_datetime)}
-FA Status: ${typeof statusLabel === 'function' ? statusLabel(r.farepair_status) : r.farepair_status}
-
-You can review/update the details (Station is editable) and endorse again.`;
+        stageMessage;
       return;
     }
 
@@ -322,6 +336,7 @@ You can review/update the details (Station is editable) and endorse again.`;
     if (logJson.found) {
       const log = logJson.log;
       endorsementScannedSerial = serial;
+      endorsementFailureAttempts = Number(log.failure_attempts) || 0;
       const savedFailureMode = String(log.remarks || '').trim();
       const retainedFailureMode = endorsementRetainedFailureMode || '';
       document.getElementById('endorsement-station').value = log.station || '';
@@ -358,14 +373,19 @@ Model: ${log.model || '–'}
 Station: ${log.station || '–'}
 PO: ${log.po_num || '–'}
 Log Date & Time: ${formatEndorsementDate(log.log_datetime)}
+Workflow Stage: Not yet endorsed to FA
 Remarks: ${log.remarks || '–'}
+Failed Attempts: ${endorsementFailureAttempts}
 
-The details are auto-filled. You can review and press "Endorse to FA".`;
+${endorsementFailureAttempts >= 3
+  ? 'The _3 failure record is present. The details are auto-filled; review them and press "Endorse to FA".'
+  : 'Endorsement is blocked until the _3 failure record is present.'}`;
       return;
     }
 
     setEndorsementOfflineMode(true);
     endorsementScannedSerial = serial;
+    endorsementFailureAttempts = 0;
     document.getElementById('endorsement-product').value = '';
     document.getElementById('endorsement-model').value = '';
     document.getElementById('endorsement-station').value = '';
@@ -385,6 +405,14 @@ document.getElementById('btn-endorsement-endorser-change').addEventListener('cli
   inp.readOnly = !inp.readOnly;
   if (!inp.readOnly) inp.focus();
 });
+document.getElementById('endorsement-endorser').addEventListener('input', event => {
+  const value = event.currentTarget.value.trim();
+  if (value) {
+    localStorage.setItem(getEndorsementOverrideKey(), value);
+  } else {
+    localStorage.removeItem(getEndorsementOverrideKey());
+  }
+});
 
 // ── SUBMIT ────────────────────────────────────────────────────────────────────
 document.getElementById('btn-endorsement-submit').addEventListener('click', async () => {
@@ -397,6 +425,14 @@ document.getElementById('btn-endorsement-submit').addEventListener('click', asyn
   }
   if (serial && endorsementScannedSerial !== serial) {
     err.textContent = 'Could not verify this serial. Please scan it again before submitting.';
+    return;
+  }
+  if (endorsementAlreadySubmitted && endorsementExistingStatus !== 1) {
+    err.textContent = `Serial ${serial} has already progressed beyond endorsement and cannot be endorsed again.`;
+    return;
+  }
+  if (endorsementFailureAttempts === null || endorsementFailureAttempts < 3) {
+    err.textContent = `Serial ${serial || '(blank)'} cannot be endorsed yet. The _3 failure record must be present first.`;
     return;
   }
   const productSelect = document.getElementById('endorsement-product');
@@ -415,7 +451,7 @@ document.getElementById('btn-endorsement-submit').addEventListener('click', asyn
   if (!station)  { err.textContent = 'Please enter a station.'; return; }
   if (!endorser) { err.textContent = 'Please enter the employee number of the endorser.'; return; }
   if (!failMode) { err.textContent = 'Please describe the failure mode.'; return; }
-  if (endorsementAlreadySubmitted &&
+  if (endorsementAlreadySubmitted && endorsementExistingStatus === 1 &&
       !window.confirm(`Serial ${serial} has already been endorsed. Do you want to update its endorsement details?`)) {
     document.getElementById('endorsement-serial').value = '';
     endorsementScannedSerial = '';
