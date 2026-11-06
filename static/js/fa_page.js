@@ -12,12 +12,16 @@ document.getElementById('btn-fa-exit').addEventListener('click', closeFaModal);
 const FAPAGE_TEXT_FIELDS   = ['fa-failure-cause', 'fa-affected-comp', 'fa-proposed-action'];
 const FAPAGE_SELECT_FIELDS = ['fa-defect-cat', 'fa-class'];
 let faRetainedValues = null;
+let faScannedSerial = '';
+let faAlreadySubmitted = false;
 
 function closeFaModal() {
   document.getElementById('modal-fa').style.display = 'none';
 }
 
 function resetFaForm() {
+  faScannedSerial = '';
+  faAlreadySubmitted = false;
   faRetainedValues = null;
   document.getElementById('fa-retained-note').hidden = true;
   document.getElementById('fa-error').textContent = '';
@@ -102,12 +106,17 @@ document.getElementById('fa-serial').addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); scanFaSerial(); }
 });
 document.getElementById('fa-serial').addEventListener('blur', scanFaSerial);
+document.getElementById('fa-serial').addEventListener('input', () => {
+  faScannedSerial = '';
+  faAlreadySubmitted = false;
+});
 
 async function scanFaSerial() {
   const err    = document.getElementById('fa-error');
   const serial = document.getElementById('fa-serial').value.trim();
   err.textContent = '';
   if (!serial) return;
+  if (faScannedSerial === serial) return;
 
   try {
     const res  = await fetch(APP_ROOT + '/api/failure_analysis/lookup/' + encodeURIComponent(serial));
@@ -120,6 +129,8 @@ async function scanFaSerial() {
       return;
     }
     const r = json.row;
+    faScannedSerial = serial;
+    faAlreadySubmitted = Boolean(r.fa_case || r.faended_datetime);
 
     document.getElementById('fa-datetime').value = formatDate(r.faendorse_datetime);
     document.getElementById('fa-document-url').value = r.url || '';
@@ -128,8 +139,11 @@ async function scanFaSerial() {
       r.document_urls || [],
       'No documents saved for this FA case.'
     );
-    document.getElementById('fa-text-display').textContent =
-    `UUT DETAILS:
+    const faStatus = Number(r.farepair_status);
+    document.getElementById('fa-text-display').textContent = faStatus >= 2
+      ? `This serial has already completed Failure Analysis. ${faWorkflowStageLabel(faStatus)}. Failure Analysis details are hidden.`
+      : `${faWorkflowStageLabel(faStatus)}
+    UUT DETAILS:
 
     Product: ${r.product || '–'}
     Model: ${r.model || '–'}
@@ -137,7 +151,8 @@ async function scanFaSerial() {
     Station: ${r.station || '–'}
     Test Failure: ${r.test_failure || '–'}
     Endorsed By: ${r.prod_endorser || '–'}
-    Endorsement Date & Time: ${formatDate(r.faendorse_datetime)}`;
+    Endorsement Date & Time: ${formatDate(r.faendorse_datetime)}
+    `;
 
     const faFields = [
       { id: 'fa-failure-cause', label: 'cause of failure', value: r.failure_cause },
@@ -222,9 +237,26 @@ document.getElementById('btn-fa-submit').addEventListener('click', async () => {
   err.textContent = '';
 
   const serial  = document.getElementById('fa-serial').value.trim();
+  if (serial && faScannedSerial !== serial) {
+    await scanFaSerial();
+  }
+  if (serial && faScannedSerial !== serial) {
+    err.textContent = 'Could not verify this serial. Please scan it again before submitting.';
+    return;
+  }
   const faClass = document.getElementById('fa-class').value;
   if (!serial)  { err.textContent = 'Please scan a valid serial number.'; return; }
   if (!['1','2','3','4'].includes(faClass)) { err.textContent = 'FA Class must be 1, 2, 3, or 4.'; return; }
+  if (faAlreadySubmitted &&
+      !window.confirm(`Serial ${serial} already has a saved failure analysis. Do you want to update it?`)) {
+    document.getElementById('fa-serial').value = '';
+    document.getElementById('fa-datetime').value = '';
+    document.getElementById('fa-text-display').textContent = 'Scan a serial number to load UUT details…';
+    faScannedSerial = '';
+    faAlreadySubmitted = false;
+    err.textContent = 'Failure analysis update canceled; no changes were made.';
+    return;
+  }
 
   const payload = {
     serial_num: serial,
@@ -254,6 +286,8 @@ document.getElementById('btn-fa-submit').addEventListener('click', async () => {
       'fa-class': payload.fa_class,
     };
     document.getElementById('fa-serial').value = '';
+    faScannedSerial = '';
+    faAlreadySubmitted = false;
     document.getElementById('fa-datetime').value = '';
     document.getElementById('fa-document-url').value = '';
     renderFaDocumentLinks(document.getElementById('fa-document-links'), [], 'Scan a serial to view its FA case documents.');

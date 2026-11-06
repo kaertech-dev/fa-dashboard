@@ -5,16 +5,26 @@ document.getElementById('btn-return-close').addEventListener('click', closeRetur
 document.getElementById('btn-return-exit').addEventListener('click', closeReturnModal);
 
 const RETURN_DEFAULT_MSG = 'Please enter the employee number of the person-in-charge.';
+let returnPicRetained = false;
+let returnScannedSerial = '';
+let returnAlreadySubmitted = false;
 
 function closeReturnModal() {
   document.getElementById('modal-return').style.display = 'none';
 }
 
-function resetReturnForm() {
+function clearReturnSerial() {
   document.getElementById('return-error').textContent = '';
   document.getElementById('return-serial').value = '';
   document.getElementById('return-datetime').value = '';
   document.getElementById('return-text-display').textContent = RETURN_DEFAULT_MSG;
+}
+
+function resetReturnForm() {
+  clearReturnSerial();
+  returnScannedSerial = '';
+  returnAlreadySubmitted = false;
+  returnPicRetained = false;
   document.getElementById('return-pic').value = '';
   document.getElementById('return-pic').readOnly = true;
 }
@@ -36,17 +46,18 @@ function formatReturnDate(v) {
 document.getElementById('return-serial').addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); scanReturnSerial(); }
 });
-document.getElementById('rework-serial').addEventListener('keydown', e => {
-  if (e.key === 'Enter') { e.preventDefault(); scanReworkSerial(); }
-});
 document.getElementById('return-serial').addEventListener('blur', scanReturnSerial);
-document.getElementById('rework-serial').addEventListener('blur', scanReworkSerial);
+document.getElementById('return-serial').addEventListener('input', () => {
+  returnScannedSerial = '';
+  returnAlreadySubmitted = false;
+});
 
 async function scanReturnSerial() {
   const err    = document.getElementById('return-error');
   const serial = document.getElementById('return-serial').value.trim();
   err.textContent = '';
   if (!serial) return;
+  if (returnScannedSerial === serial) return;
 
   try {
     const res  = await fetch(APP_ROOT + '/api/return/lookup/' + encodeURIComponent(serial));
@@ -60,9 +71,16 @@ async function scanReturnSerial() {
       return;
     }
     const r = json.row;
+    returnScannedSerial = serial;
+    returnAlreadySubmitted = Boolean(
+      r.returned_datetime || Number(r.farepair_status) === 4
+    );
     document.getElementById('return-datetime').value = formatReturnDate(r.repaired_datetime || r.faendorse_datetime);
-    document.getElementById('return-text-display').textContent =
-    `UUT DETAILS:
+    const returnStatus = Number(r.farepair_status);
+    document.getElementById('return-text-display').textContent = returnStatus >= 4
+      ? `This serial has already completed Return. ${faWorkflowStageLabel(returnStatus)}. Endorsement, Failure Analysis, and Rework details are hidden.`
+      : `${faWorkflowStageLabel(returnStatus)}
+    UUT DETAILS:
     Product: ${r.product || '–'}
     Model: ${r.model || '–'}
     PO: ${r.po_num || '–'}
@@ -70,6 +88,7 @@ async function scanReturnSerial() {
     Test Failure: ${r.test_failure || '–'}
     Endorsed By: ${r.prod_endorser || '–'}
     Endorsement Date & Time: ${formatReturnDate(r.faendorse_datetime)}
+
 
 FA FINDINGS:
     Failure Cause: ${r.failure_cause || '–'}
@@ -84,7 +103,9 @@ REPAIR SUMMARY:
     Repairer: ${r.repairer || '–'}
     Repaired Date: ${formatReturnDate(r.repaired_datetime)}`;
 
-    document.getElementById('return-pic').value = r.repairer || '';
+    if (!returnPicRetained) {
+      document.getElementById('return-pic').value = r.repairer || '';
+    }
   } catch (e) {
     err.textContent = 'Could not reach server: ' + e.message;
   }
@@ -100,16 +121,36 @@ document.getElementById('btn-return-pic-change').addEventListener('click', () =>
     : 'Enter the employee number of the person returning this unit.';
 });
 
+document.getElementById('return-pic').addEventListener('input', () => {
+  returnPicRetained = true;
+});
+
 // ── SUBMIT ────────────────────────────────────────────────────────────────────
 document.getElementById('btn-return-submit').addEventListener('click', async () => {
   const err = document.getElementById('return-error');
   err.textContent = '';
 
   const serial   = document.getElementById('return-serial').value.trim();
+  if (serial && returnScannedSerial !== serial) {
+    await scanReturnSerial();
+  }
+  if (serial && returnScannedSerial !== serial) {
+    err.textContent = 'Could not verify this serial. Please scan it again before submitting.';
+    return;
+  }
   const returner = document.getElementById('return-pic').value.trim();
 
   if (!serial)   { err.textContent = 'Please scan a valid serial number.'; return; }
   if (!returner) { err.textContent = 'Please enter the employee number of the person-in-charge.'; return; }
+  if (returnAlreadySubmitted &&
+      !window.confirm(`Serial ${serial} has already been returned. Do you want to update its return details?`)) {
+    clearReturnSerial();
+    returnScannedSerial = '';
+    returnAlreadySubmitted = false;
+    err.textContent = 'Return update canceled; no changes were made.';
+    document.getElementById('return-serial').focus();
+    return;
+  }
 
   const payload = { serial_num: serial, returner: returner };
 
@@ -121,7 +162,11 @@ document.getElementById('btn-return-submit').addEventListener('click', async () 
   const json = await res.json();
   if (json.ok) {
     if (typeof loadAndRender === 'function') loadAndRender();
-    resetReturnForm();
+    returnPicRetained = true;
+    clearReturnSerial();
+    returnScannedSerial = '';
+    returnAlreadySubmitted = false;
+    document.getElementById('return-serial').focus();
   } else {
     err.textContent = json.error || 'Failed to return unit.';
   }

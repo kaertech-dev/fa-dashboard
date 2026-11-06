@@ -165,6 +165,12 @@ def endorsement_lookup(serial_num):
             k: (str(v) if v is not None and not isinstance(v, (int, float, str, bool)) else v)
             for k, v in row.items()
         }
+        clean["failure_attempts"] = station_log.get_failure_attempts(
+            serial_num.strip(),
+            clean.get("product"),
+            clean.get("model"),
+            clean.get("station"),
+        )
         return jsonify({"ok": True, "found": True, "row": clean})
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
@@ -182,6 +188,12 @@ def endorsement_station_log(serial_num):
         if hit is None:
             return jsonify({"ok": True, "found": False})
         log = dict(hit)
+        log["failure_attempts"] = station_log.get_failure_attempts(
+            serial_num.strip(),
+            log["product"],
+            log["model"],
+            log["station"],
+        )
         row_locator = log.pop("row_locator", None)
         log["row_ref"] = (
             _station_log_serializer.dumps({
@@ -189,6 +201,7 @@ def endorsement_station_log(serial_num):
                 "model": log["model"],
                 "station": log["station"],
                 "serial_num": serial_num.strip(),
+                "source_serial_num": log.get("source_serial_num", serial_num.strip()),
                 "row_locator": row_locator,
             })
             if row_locator
@@ -266,7 +279,7 @@ def endorsement_update_remarks():
             product,
             model,
             station,
-            serial_num,
+            row_reference.get("source_serial_num", serial_num),
             remarks,
             row_reference.get("row_locator"),
         )
@@ -300,6 +313,47 @@ def update_endorsement_route():
     if not test_failure:
         return jsonify({"ok": False, "error": "Please describe the failure mode."})
 
+    try:
+        existing_fa = get_fa_by_serial(serial_num)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Could not verify existing FA status: {e}"}), 500
+    if existing_fa is not None:
+        try:
+            existing_status = int(existing_fa.get("farepair_status"))
+        except (TypeError, ValueError):
+            existing_status = None
+        if existing_status != 1:
+            stage_by_status = {
+                2: "already endorsed and processed by Failure Analysis",
+                3: "already endorsed, processed by Failure Analysis, and reworked",
+                4: "already endorsed, processed by Failure Analysis, reworked, and returned",
+            }
+            stage = stage_by_status.get(
+                existing_status,
+                "already has an FA record at an unrecognized workflow stage",
+            )
+            return jsonify({
+                "ok": False,
+                "farepair_status": existing_status,
+                "error": f"Serial {serial_num} {stage}; endorsement cannot overwrite its current stage.",
+            }), 409
+
+    try:
+        failure_attempts = station_log.get_failure_attempts(
+            serial_num, product, model, station
+        )
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Could not verify failed attempts: {e}"}), 500
+    if failure_attempts < 3:
+        return jsonify({
+            "ok": False,
+            "failure_attempts": failure_attempts,
+            "error": (
+                f"Serial {serial_num} has only reached failure attempt {failure_attempts}. "
+                "Endorsement is allowed after the _3 failure record is present."
+            ),
+        }), 400
+
     fields = {
         "product":            product,
         "model":              model,
@@ -311,7 +365,14 @@ def update_endorsement_route():
         "farepair_status":    1,  # Open — awaiting failure analysis
     }
     try:
-        create_or_update_endorsement(serial_num, fields)
+        if not create_or_update_endorsement(serial_num, fields):
+            return jsonify({
+                "ok": False,
+                "error": (
+                    f"Serial {serial_num} has progressed beyond endorsement; "
+                    "its FA workflow status was not changed."
+                ),
+            }), 409
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
@@ -399,7 +460,11 @@ def update_fa_route():
         row = get_fa_by_serial(serial_num)
         if row is None:
             return jsonify({"ok": False, "error": "Serial number not found."})
-        update_fa(serial_num, fields)
+        if not update_fa(serial_num, fields):
+            return jsonify({
+                "ok": False,
+                "error": "Failure Analysis can only be submitted while this serial is awaiting FA (status 1).",
+            }), 409
         updated_row = get_fa_by_serial(serial_num)
         save_fa_url(updated_row["fa_case"], document_url)
         return jsonify({"ok": True})
@@ -484,7 +549,11 @@ def update_rework_route():
         row = get_fa_by_serial(serial_num)
         if row is None:
             return jsonify({"ok": False, "error": "Serial number not found."})
-        update_rework(serial_num, fields)
+        if not update_rework(serial_num, fields):
+            return jsonify({
+                "ok": False,
+                "error": "Rework can only be submitted after Failure Analysis is complete (status 2).",
+            }), 409
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
@@ -526,7 +595,11 @@ def return_rework():
         row = get_fa_by_serial(serial_num)
         if row is None:
             return jsonify({"ok": False, "error": "Serial number not found."})
-        update_rework(serial_num, fields)
+        if not update_rework(serial_num, fields):
+            return jsonify({
+                "ok": False,
+                "error": "Return can only be submitted after rework is complete (status 3).",
+            }), 409
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
@@ -895,7 +968,6 @@ def get_open_fa():
         return jsonify({"ok": True, "rows": _clean_rows(rows)})
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
-
 
 @app.route("/api/hide_dates", methods=["GET"])
 @require_login
