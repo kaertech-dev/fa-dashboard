@@ -344,13 +344,13 @@ def update_endorsement_route():
         )
     except Exception as e:
         return jsonify({"ok": False, "error": f"Could not verify failed attempts: {e}"}), 500
-    if failure_attempts < 3:
+    if failure_attempts != 3:
         return jsonify({
             "ok": False,
             "failure_attempts": failure_attempts,
             "error": (
-                f"Serial {serial_num} has only reached failure attempt {failure_attempts}. "
-                "Endorsement is allowed after the _3 failure record is present."
+                f"Serial {serial_num} has test_rep value {failure_attempts}. "
+                "Endorsement requires test_rep to equal 3."
             ),
         }), 400
 
