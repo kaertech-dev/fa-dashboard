@@ -375,11 +375,11 @@ PO: ${log.po_num || '–'}
 Log Date & Time: ${formatEndorsementDate(log.log_datetime)}
 Workflow Stage: Not yet endorsed to FA
 Remarks: ${log.remarks || '–'}
-Failed Attempts: ${endorsementFailureAttempts}
+Test Rep: ${log.test_rep ?? endorsementFailureAttempts}
 
-${endorsementFailureAttempts >= 3
-  ? 'The _3 failure record is present. The details are auto-filled; review them and press "Endorse to FA".'
-  : 'Endorsement is blocked until the _3 failure record is present.'}`;
+${endorsementFailureAttempts === 3
+  ? 'The test_rep value is 3. The details are auto-filled; review them and press "Endorse to FA".'
+  : 'Endorsement is blocked unless test_rep equals 3.'}`;
       return;
     }
 
@@ -431,8 +431,8 @@ document.getElementById('btn-endorsement-submit').addEventListener('click', asyn
     err.textContent = `Serial ${serial} has already progressed beyond endorsement and cannot be endorsed again.`;
     return;
   }
-  if (endorsementFailureAttempts === null || endorsementFailureAttempts < 3) {
-    err.textContent = `Serial ${serial || '(blank)'} cannot be endorsed yet. The _3 failure record must be present first.`;
+  if (endorsementFailureAttempts !== 3) {
+    err.textContent = `Serial ${serial || '(blank)'} cannot be endorsed yet. Its test_rep value must equal 3.`;
     return;
   }
   const productSelect = document.getElementById('endorsement-product');

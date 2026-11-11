@@ -216,6 +216,7 @@ class StationLog:
                              'timestamp', 'date_time', 'test_date', 'date']
     
     _PO_CANDIDATES        = ['po_num', 'po_number', 'ponum', 'po', 'purchase_order', 'purchase_order_num']
+    _TEST_REP_CANDIDATES  = ['test_rep']
 
     def __init__(self, active_projects=None):
         self._active = active_projects or ActiveProjects()
@@ -268,22 +269,20 @@ class StationLog:
         remarks_col = self._pick(columns, self._REMARKS_CANDIDATES)
         dt_col      = self._pick(columns, self._DATETIME_CANDIDATES)
         po_col      = self._pick(columns, self._PO_CANDIDATES)
+        test_rep_col = self._pick(columns, self._TEST_REP_CANDIDATES)
 
         order_col = dt_col or self._pick(columns, ['id'])
         order_sql = f"ORDER BY {_quote_identifier(order_col)} DESC" if order_col else ""
-        serial_values = [serial_num, *(f"{serial_num}_{attempt}" for attempt in (1, 2, 3))]
-
         try:
             with projects_engine.connect() as conn:
                 sql = (
                     f"SELECT * FROM {_quote_identifier(schema_id)}.{_quote_identifier(table)} "
-                    f"WHERE {_quote_identifier(serial_col)} "
-                    "IN (:serial_0, :serial_1, :serial_2, :serial_3) "
+                    f"WHERE {_quote_identifier(serial_col)} = :serial_num "
                     f"{order_sql} LIMIT 1"
                 )
                 result = conn.execute(
                     text(sql),
-                    {f"serial_{index}": value for index, value in enumerate(serial_values)},
+                    {"serial_num": serial_num},
                 )
                 row = result.mappings().fetchone()
         except Exception as e:
@@ -312,6 +311,7 @@ class StationLog:
             "remarks":      (row.get(remarks_col) if remarks_col else None) or "",
             "log_datetime": str(row.get(dt_col)) if dt_col and row.get(dt_col) else None,
             "po_num":       (row.get(po_col) if po_col else None) or "",
+            "test_rep":     row.get(test_rep_col) if test_rep_col else None,
             "row_locator": row_locator,
         }
 
@@ -347,7 +347,7 @@ class StationLog:
         return matches[0]
 
     def get_failure_attempts(self, serial_num, product, model, station):
-        """Return the highest failed-attempt suffix recorded for a unit."""
+        """Return test_rep from the latest station record for the exact serial."""
         projects = {
             project["id"] for project in self._active.get_active_products()
         }
@@ -369,36 +369,32 @@ class StationLog:
         table = f"{model}_{station}"
         columns = self._columns(product, table)
         serial_col = self._pick(columns, self._SERIAL_CANDIDATES)
-        if not serial_col:
+        test_rep_col = self._pick(columns, self._TEST_REP_CANDIDATES)
+        if not serial_col or not test_rep_col:
             return 0
+        order_col = self._pick(columns, self._DATETIME_CANDIDATES) or self._pick(columns, ["id"])
+        order_sql = f"ORDER BY {_quote_identifier(order_col)} DESC" if order_col else ""
 
-        failed_serials = [f"{serial_num}_{attempt}" for attempt in (1, 2, 3)]
         try:
             with projects_engine.connect() as conn:
                 result = conn.execute(
                     text(
-                        f"SELECT DISTINCT {_quote_identifier(serial_col)} "
+                        f"SELECT {_quote_identifier(test_rep_col)} "
                         f"FROM {_quote_identifier(product)}.{_quote_identifier(table)} "
-                        f"WHERE {_quote_identifier(serial_col)} IN "
-                        "(:failed_1, :failed_2, :failed_3)"
+                        f"WHERE {_quote_identifier(serial_col)} = :serial_num "
+                        f"{order_sql} LIMIT 1"
                     ),
-                    {
-                        f"failed_{attempt}": failed_serials[attempt - 1]
-                        for attempt in (1, 2, 3)
-                    },
+                    {"serial_num": serial_num},
                 )
-                found_serials = {str(row[0]) for row in result}
+                row = result.first()
+                value = row[0] if row else None
         except Exception as e:
-            raise RuntimeError(f"Could not check failed attempts for serial '{serial_num}'.") from e
+            raise RuntimeError(f"Could not check test_rep for serial '{serial_num}'.") from e
 
-        return max(
-            (
-                attempt
-                for attempt, failed_serial in enumerate(failed_serials, start=1)
-                if failed_serial in found_serials
-            ),
-            default=0,
-        )
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
         
     def update_remarks(self, schemadb, model, station, serial_num, remarks, row_locator):
         """
