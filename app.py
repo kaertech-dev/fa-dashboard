@@ -376,6 +376,7 @@ def update_endorsement_route():
         "prod_endorser":      prod_endorser,
         "faendorse_datetime": faendorse_datetime,
         "farepair_status":    1,  # Open — awaiting failure analysis
+        "endorsement_mode":   mode,
     }
     try:
         if not create_or_update_endorsement(serial_num, fields):
