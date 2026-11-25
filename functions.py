@@ -293,11 +293,11 @@ def create_or_update_endorsement(serial_num: str, fields: dict):
 
     `fields` should only contain endorsement-stage columns:
       product, model, station, po_num, test_failure, prod_endorser,
-      faendorse_datetime, farepair_status
+      faendorse_datetime, farepair_status, endorsement_mode
     """
     allowed = {
         "product", "model", "station", "po_num", "test_failure",
-        "prod_endorser", "faendorse_datetime", "farepair_status",
+        "prod_endorser", "faendorse_datetime", "farepair_status", "endorsement_mode",
     }
     fields = {k: v for k, v in fields.items() if k in allowed}
     if not fields:

@@ -256,7 +256,7 @@ class StationLog:
                 return lower[cand]
         return None
 
-    def _query_table(self, schemadb, model, station, table, serial_num):
+    def _query_table(self, schemadb, model, station, table, serial_num, include_test_rep=True):
         schema_id = schemadb
         columns = self._columns(schema_id, table)
         if not columns:
@@ -269,14 +269,20 @@ class StationLog:
         remarks_col = self._pick(columns, self._REMARKS_CANDIDATES)
         dt_col      = self._pick(columns, self._DATETIME_CANDIDATES)
         po_col      = self._pick(columns, self._PO_CANDIDATES)
-        test_rep_col = self._pick(columns, self._TEST_REP_CANDIDATES)
+        test_rep_col = self._pick(columns, self._TEST_REP_CANDIDATES) if include_test_rep else None
 
         order_col = dt_col or self._pick(columns, ['id'])
         order_sql = f"ORDER BY {_quote_identifier(order_col)} DESC" if order_col else ""
+        selected_cols = list(dict.fromkeys(
+            column for column in (
+                serial_col, remarks_col, dt_col, po_col, test_rep_col
+            ) if column
+        ))
+        select_sql = ", ".join(_quote_identifier(column) for column in selected_cols)
         try:
             with projects_engine.connect() as conn:
                 sql = (
-                    f"SELECT * FROM {_quote_identifier(schema_id)}.{_quote_identifier(table)} "
+                    f"SELECT {select_sql} FROM {_quote_identifier(schema_id)}.{_quote_identifier(table)} "
                     f"WHERE {_quote_identifier(serial_col)} = :serial_num "
                     f"{order_sql} LIMIT 1"
                 )
@@ -293,10 +299,30 @@ class StationLog:
             return None
 
         primary_key_cols = self._primary_key_columns(schema_id, table)
+        locator_row = row
+        if primary_key_cols and any(column not in row for column in primary_key_cols):
+            primary_key_sql = ", ".join(
+                _quote_identifier(column) for column in primary_key_cols
+            )
+            try:
+                with projects_engine.connect() as conn:
+                    result = conn.execute(
+                        text(
+                            f"SELECT {primary_key_sql} "
+                            f"FROM {_quote_identifier(schema_id)}.{_quote_identifier(table)} "
+                            f"WHERE {_quote_identifier(serial_col)} = :serial_num "
+                            f"{order_sql} LIMIT 1"
+                        ),
+                        {"serial_num": serial_num},
+                    )
+                    locator_row = result.mappings().fetchone() or row
+            except Exception as e:
+                print(f"[StationLog] primary key values for '{schemadb}'.'{table}': {e}")
+
         row_locator = (
             {
                 column: (
-                    str(row[column]) if row[column] is not None else None
+                    str(locator_row[column]) if locator_row[column] is not None else None
                 )
                 for column in primary_key_cols
             }
@@ -311,11 +337,12 @@ class StationLog:
             "remarks":      (row.get(remarks_col) if remarks_col else None) or "",
             "log_datetime": str(row.get(dt_col)) if dt_col and row.get(dt_col) else None,
             "po_num":       (row.get(po_col) if po_col else None) or "",
-            "test_rep":     row.get(test_rep_col) if test_rep_col else None,
             "row_locator": row_locator,
+            **({"test_rep": row.get(test_rep_col) if test_rep_col else None}
+               if include_test_rep else {}),
         }
 
-    def find_last_log(self, serial_num):
+    def find_last_log(self, serial_num, include_test_rep=True):
         """
         Brute-force search across every active product's model/station tables
         (lists come from ActiveProjects' cache, but each table is still an
@@ -336,7 +363,9 @@ class StationLog:
                 for station in self._active.get_stations_by_model(product_id, model_id):
                     station_id = station['id']
                     table = f"{model_id}_{station_id}"
-                    hit = self._query_table(product_id, model_id, station_id, table, serial_num)
+                    hit = self._query_table(
+                        product_id, model_id, station_id, table, serial_num, include_test_rep
+                    )
                     if hit:
                         matches.append(hit)
 

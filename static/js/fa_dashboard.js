@@ -6,6 +6,7 @@ let settingsAccess = false;
 let runUnitsRequest = 0;
 let runUnitsController = null;
 let lastRunUnitsValue = null;
+let lastRunUnitsScope = null;
 let availableDashboardDates = [];
 let dataRequestId = 0;
 let activeDatePicker = null;
@@ -1153,19 +1154,72 @@ function getRowsForCurrentSelection() {
 
 // ── KPIs ──────────────────────────────────────────────────────────────────────
 function renderKPIs() {
-  document.getElementById('kpi-total').textContent    = filteredData.length.toLocaleString();
-  document.getElementById('filtered-kpi-open').textContent =
-    `${monthlyStatus.month} · Selected filters: ${filteredData.filter(r=>r.farepair_status==1).length.toLocaleString()}`;
-  document.getElementById('filtered-kpi-wip').textContent =
-    `${monthlyStatus.month} · Selected filters: ${filteredData.filter(r=>r.farepair_status==2).length.toLocaleString()}`;
-  document.getElementById('filtered-kpi-reworked').textContent =
-    `${monthlyStatus.month} · Selected filters: ${filteredData.filter(r=>r.farepair_status==3).length.toLocaleString()}`;
-  document.getElementById('filtered-kpi-closed').textContent =
-    `${monthlyStatus.month} · Selected filters: ${filteredData.filter(r=>r.farepair_status==4).length.toLocaleString()}`;
-  document.getElementById('kpi-products').textContent = new Set(filteredData.map(r=>r.product).filter(Boolean)).size;
+  const count = s => filteredData.filter(r => r.farepair_status == s).length;
+  const cards = [
+    ['open', 1, monthlyStatus.open],
+    ['wip', 2, monthlyStatus.in_progress],
+    ['reworked', 3, monthlyStatus.reworked],
+    ['closed', 4, monthlyStatus.closed],
+  ];
+
+  document.getElementById('kpi-total').textContent = filteredData.length.toLocaleString();
+
+  cards.forEach(([id, status, monthValue]) => {
+    document.getElementById(`kpi-${id}`).textContent = count(status).toLocaleString();
+    document.getElementById(`filtered-kpi-${id}`).textContent =
+      `${monthlyStatus.month}: ${Number(monthValue).toLocaleString()}`;
+  });
+
+  document.getElementById('kpi-products').textContent =
+    new Set(filteredData.map(r => r.product).filter(Boolean)).size;
+  updateDefectRateKpi();
   if (lastRunUnitsValue === null) {
     document.getElementById('kpi-run-units').textContent = 'loading...';
   }
+}
+
+function updateDefectRateKpi() {
+  const valueEl = document.getElementById('kpi-defect-rate');
+  const subEl = document.getElementById('kpi-defect-rate-sub');
+  if (!valueEl || !subEl) return;
+
+  const matchingFaRows = getRowsForCurrentSelection().filter(record => !shouldHideRecord(record));
+  const defectUnits = new Set(
+    matchingFaRows.map(record => String(record.serial_num || '').trim()).filter(Boolean)
+  ).size;
+
+  const selectedScope = getRunUnitsScope();
+  if (lastRunUnitsValue === null || lastRunUnitsScope !== selectedScope) {
+    valueEl.textContent = '–';
+    subEl.textContent = `${defectUnits.toLocaleString()} defect units · scanned total loading for selected filters`;
+    return;
+  }
+  const totalUnits = lastRunUnitsValue + defectUnits;
+  if (totalUnits <= 0) {
+    valueEl.textContent = '–';
+    subEl.textContent = 'No inspected units in the selected range';
+    return;
+  }
+
+  const percentage = (defectUnits / totalUnits) * 100;
+  valueEl.textContent = `${percentage.toLocaleString(undefined, {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1
+  })}%`;
+  subEl.textContent = `${defectUnits.toLocaleString()} fail / ${lastRunUnitsValue.toLocaleString()} pass · ${totalUnits.toLocaleString()} total`;
+}
+
+function getRunUnitsScope() {
+  const from = document.getElementById('f-from').value;
+  const to = document.getElementById('f-to').value;
+  if (!from && !to) return null;
+  return JSON.stringify([
+    from || to,
+    to || from,
+    document.getElementById('f-product').value,
+    document.getElementById('f-model').value,
+    document.getElementById('f-station').value
+  ]);
 }
 
 function updateMonthlyStatus(status) {
@@ -1182,10 +1236,11 @@ function updateMonthlyStatus(status) {
     ? new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
     : 'Current Month';
   monthlyStatus.month = monthLabel;
-  document.getElementById('kpi-open').textContent = monthlyStatus.open.toLocaleString();
-  document.getElementById('kpi-wip').textContent = monthlyStatus.in_progress.toLocaleString();
-  document.getElementById('kpi-reworked').textContent = monthlyStatus.reworked.toLocaleString();
-  document.getElementById('kpi-closed').textContent = monthlyStatus.closed.toLocaleString();
+  // document.getElementById('kpi-open').textContent = monthlyStatus.open.toLocaleString();
+  // document.getElementById('kpi-wip').textContent = monthlyStatus.in_progress.toLocaleString();
+  // document.getElementById('kpi-reworked').textContent = monthlyStatus.reworked.toLocaleString();
+  // document.getElementById('kpi-closed').textContent = monthlyStatus.closed.toLocaleString();
+  renderKPIs(); // refresh the cards so the "this month" subtext updates
 }
 
 async function loadMonthlyStatus() {
@@ -1207,7 +1262,9 @@ async function updateRunUnitsKpi() {
   const to = document.getElementById('f-to').value;
   if (!from && !to) {
     lastRunUnitsValue = null;
+    lastRunUnitsScope = null;
     document.getElementById('kpi-run-units').textContent = 'loading...';
+    updateDefectRateKpi();
     return;
   }
   const params = new URLSearchParams({
@@ -1228,7 +1285,9 @@ async function updateRunUnitsKpi() {
     if (requestId === runUnitsRequest) {
       if (json.ok && json.run_units !== null && json.run_units !== undefined) {
         lastRunUnitsValue = Number(json.run_units);
+        lastRunUnitsScope = getRunUnitsScope();
         document.getElementById('kpi-run-units').textContent = lastRunUnitsValue.toLocaleString();
+        updateDefectRateKpi();
       }
     }
   } catch (e) {
