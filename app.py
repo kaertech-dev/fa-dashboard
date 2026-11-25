@@ -158,6 +158,7 @@ def endorsement_lookup(serial_num):
     endorsed to FA) — so we return ok:true with found:false rather than an error.
     """
     try:
+        include_attempts = request.args.get("include_attempts", "true").lower() != "false"
         row = get_fa_by_serial(serial_num.strip())
         if row is None:
             return jsonify({"ok": True, "found": False})
@@ -165,12 +166,13 @@ def endorsement_lookup(serial_num):
             k: (str(v) if v is not None and not isinstance(v, (int, float, str, bool)) else v)
             for k, v in row.items()
         }
-        clean["failure_attempts"] = station_log.get_failure_attempts(
-            serial_num.strip(),
-            clean.get("product"),
-            clean.get("model"),
-            clean.get("station"),
-        )
+        if include_attempts:
+            clean["failure_attempts"] = station_log.get_failure_attempts(
+                serial_num.strip(),
+                clean.get("product"),
+                clean.get("model"),
+                clean.get("station"),
+            )
         return jsonify({"ok": True, "found": True, "row": clean})
     except Exception as e:
         return jsonify({"ok": False, "error": f"DB error: {e}"})
@@ -184,16 +186,18 @@ def endorsement_station_log(serial_num):
     (remarks -> test_failure) when a brand-new serial is scanned.
     """
     try:
-        hit = station_log.find_last_log(serial_num.strip())
+        include_test_rep = request.args.get("include_test_rep", "true").lower() != "false"
+        hit = station_log.find_last_log(serial_num.strip(), include_test_rep=include_test_rep)
         if hit is None:
             return jsonify({"ok": True, "found": False})
         log = dict(hit)
-        log["failure_attempts"] = station_log.get_failure_attempts(
-            serial_num.strip(),
-            log["product"],
-            log["model"],
-            log["station"],
-        )
+        if include_test_rep:
+            log["failure_attempts"] = station_log.get_failure_attempts(
+                serial_num.strip(),
+                log["product"],
+                log["model"],
+                log["station"],
+            )
         row_locator = log.pop("row_locator", None)
         log["row_ref"] = (
             _station_log_serializer.dumps({
@@ -295,6 +299,7 @@ def endorsement_update_remarks():
 @require_group("FA")
 def update_endorsement_route():
     data = request.get_json(silent=True) or {}
+    mode          = str(data.get("mode") or "production").strip().lower()
     serial_num    = data.get("serial_num", "").strip()
     product       = data.get("product", "").strip()
     model         = data.get("model", "").strip()
@@ -306,6 +311,8 @@ def update_endorsement_route():
 
     if not serial_num:
         return jsonify({"ok": False, "error": "Serial number is required."})
+    if mode not in ("production", "development"):
+        return jsonify({"ok": False, "error": "Mode must be Production or Development."}), 400
     if not product or not model or not station:
         return jsonify({"ok": False, "error": "Product, Model and Station are required."})
     if not prod_endorser:
@@ -338,21 +345,22 @@ def update_endorsement_route():
                 "error": f"Serial {serial_num} {stage}; endorsement cannot overwrite its current stage.",
             }), 409
 
-    try:
-        failure_attempts = station_log.get_failure_attempts(
-            serial_num, product, model, station
-        )
-    except Exception as e:
-        return jsonify({"ok": False, "error": f"Could not verify failed attempts: {e}"}), 500
-    if failure_attempts != 3:
-        return jsonify({
-            "ok": False,
-            "failure_attempts": failure_attempts,
-            "error": (
-                f"Serial {serial_num} has test_rep value {failure_attempts}. "
-                "Endorsement requires test_rep to equal 3."
-            ),
-        }), 400
+    if mode == "production":
+        try:
+            failure_attempts = station_log.get_failure_attempts(
+                serial_num, product, model, station
+            )
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"Could not verify failed attempts: {e}"}), 500
+        if failure_attempts != 3:
+            return jsonify({
+                "ok": False,
+                "failure_attempts": failure_attempts,
+                "error": (
+                    f"Serial {serial_num} has test_rep value {failure_attempts}. "
+                    "Endorsement requires test_rep to equal 3."
+                ),
+            }), 400
 
     fields = {
         "product":            product,

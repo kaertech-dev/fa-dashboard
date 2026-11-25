@@ -212,6 +212,11 @@
       <div class="kpi-card green kpi-clickable" data-status="4"><div class="kpi-label">Closed</div>      <div class="kpi-val" id="kpi-closed">–</div><div class="kpi-sub" id="filtered-kpi-closed">Selected filters: –</div></div>
       <div class="kpi-card blue"> <div class="kpi-label">Products</div>     <div class="kpi-val" id="kpi-products">–</div><div class="kpi-sub">unique</div></div>
       <div class="kpi-card blue"> <div class="kpi-label">Total pass Units</div>     <div class="kpi-val" id="kpi-run-units">–</div><div class="kpi-sub">unique serials</div></div>
+      <div class="kpi-card kpi-card-percentage">
+        <div class="kpi-label">Defect Rate</div>
+        <div class="kpi-val" id="kpi-defect-rate">–</div>
+        <div class="kpi-sub" id="kpi-defect-rate-sub">fail / pass · total</div>
+      </div>
     </div>
 
     <!-- Charts row 1: Product + Station -->
@@ -300,10 +305,8 @@
 </div>
 
 <!-- ── Endorsement modal ── -->
-<!-- Matches the legacy "Endorse Rejects To FA" tool: Production selects
-     Product/Model/Station, scans the Serial Number, and records the
-     Endorser + Failure Mode + PO. Submitting registers a NEW FA record
-     (or refreshes it if this serial was already endorsed once). -->
+<!-- Production looks up Product/Model/Station from station logs; Development
+     allows manual Product/Model/Station entry without serial lookups. -->
 <div id="modal-endorsement" class="modal-backdrop" style="display:none">
   <div class="modal-card" style="max-width:600px">
     <div class="modal-header">
@@ -311,11 +314,19 @@
       <button class="modal-close" id="btn-endorsement-close">✕</button>
     </div>
 
+    <div class="field" style="max-width:240px">
+      <label for="endorsement-mode">MODE</label>
+      <select id="endorsement-mode">
+        <option value="production">Production</option>
+        <option value="development">Development</option>
+      </select>
+    </div>
+
     <div style="display:flex;gap:12px">
       <div class="field" style="flex:1">
         <label>PRODUCT</label>
         <select id="endorsement-product" disabled style="display:block"><option value="">Auto Shown Product</option></select>
-        <input type="text" id="endorsement-product-input" list="endorsement-product-list" 
+        <input type="text" id="endorsement-product-input" list="endorsement-product-list"
           placeholder="Enter product name" style="display:none;width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border,#d1d5db);box-sizing:border-box">
         <datalist id="endorsement-product-list"></datalist>
         <div style="font-size:.72rem;color:var(--muted);margin-top:2px">Active customer</div>

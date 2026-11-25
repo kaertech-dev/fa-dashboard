@@ -8,9 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from functions import get_fa_conn
 
-
 FA_CASE_PREFIX = re.compile(r"^(FA\d{7})\d{3}$", re.IGNORECASE)
-
 
 def main():
     parser = argparse.ArgumentParser(
