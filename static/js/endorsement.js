@@ -15,8 +15,8 @@
 //   1. /api/endorsement/lookup/<serial>      — is it already in fa.main?
 //   2. /api/endorsement/station_log/<serial> — if not, search the production
 //      station logs (StationLog) for its most recent entry, to auto-fill
-//      Product/Model/Station and remarks (-> test_failure). Development skips
-//      serial lookups and allows manual Product/Model/Station entry.
+//      Product/Model/Station and remarks (-> test_failure). Admin-only
+//      Development mode allows manual Product/Model/Station entry.
 
 document.getElementById('btn-endorsement').addEventListener('click', openEndorsementModal);
 document.getElementById('btn-endorsement-close').addEventListener('click', closeEndorsementModal);
@@ -53,6 +53,21 @@ function isEndorsementStationEditable() {
   const group = (localStorage.getItem('fa_group') || '').toUpperCase();
   return group === 'FA' || group === 'ADMIN';
 }
+
+function isEndorsementAdmin() {
+  return (localStorage.getItem('fa_group') || '').toUpperCase() === 'ADMIN';
+}
+
+function applyEndorsementModeAccess() {
+  const modeSelect = document.getElementById('endorsement-mode');
+  const developmentOption = modeSelect.querySelector('option[value="development"]');
+  developmentOption.hidden = !isEndorsementAdmin();
+  developmentOption.disabled = !isEndorsementAdmin();
+  if (!isEndorsementAdmin() && modeSelect.value === 'development') {
+    modeSelect.value = 'production';
+  }
+}
+
 function resetEndorsementForm(resetMode = true) {
   endorsementScannedSerial = '';
   endorsementAlreadySubmitted = false;
@@ -80,6 +95,7 @@ function resetEndorsementForm(resetMode = true) {
   endorserInput.value = getEndorsementValue();
   endorserInput.readOnly = true;
 
+  applyEndorsementModeAccess();
   if (resetMode) document.getElementById('endorsement-mode').value = 'production';
   setEndorsementMode(document.getElementById('endorsement-mode').value);
   resetEndorsementSelect('endorsement-product', 'Auto Shown Product', true);
@@ -116,6 +132,11 @@ function setEndorsementMode(mode) {
 
 function handleEndorsementModeChange(event) {
   const mode = event.currentTarget.value;
+  if (mode === 'development' && !isEndorsementAdmin()) {
+    event.currentTarget.value = 'production';
+    applyEndorsementModeAccess();
+    return;
+  }
   const serial = document.getElementById('endorsement-serial').value.trim();
   const error = document.getElementById('endorsement-error');
   error.textContent = '';

@@ -313,6 +313,11 @@ def update_endorsement_route():
         return jsonify({"ok": False, "error": "Serial number is required."})
     if mode not in ("production", "development"):
         return jsonify({"ok": False, "error": "Mode must be Production or Development."}), 400
+    if mode == "development" and (session.get("group") or "").upper() != "ADMIN":
+        return jsonify({
+            "ok": False,
+            "error": "Development mode is restricted to Admin users.",
+        }), 403
     if not product or not model or not station:
         return jsonify({"ok": False, "error": "Product, Model and Station are required."})
     if not prod_endorser:
