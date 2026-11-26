@@ -558,14 +558,28 @@ document.getElementById('btn-endorsement-submit').addEventListener('click', asyn
 
     if (typeof loadAndRender === 'function') loadAndRender(); // refresh table/charts
 
-    // Modal intentionally stays open — the operator can scan straight into
-    // the next unit. Only ✕ / Exit close it now.
-    resetEndorsementForm(false);
     endorsementRetainedFailureMode = failMode;
-    setEndorsementFailureMode(failMode, false);
-    document.getElementById('endorsement-text-display').textContent =
-      `✓ Serial ${serial} endorsed to FA successfully.\n\nScan the next serial number, or click ✕ / Exit to close this window.`;
-    document.getElementById('endorsement-serial').focus();
+    if (isDevelopment) {
+      endorsementScannedSerial = '';
+      endorsementAlreadySubmitted = false;
+      endorsementExistingStatus = null;
+      endorsementFailureAttempts = null;
+      endorsementRemarksNeedsWriteback = false;
+      endorsementStationLogRef = null;
+      endorsementCurrentStationLogHasBlankRemarks = false;
+      document.getElementById('endorsement-serial').value = '';
+      const textDisplay = document.getElementById('endorsement-text-display');
+      textDisplay.textContent +=
+        `\n\n✓ Serial ${serial} endorsed to FA successfully. Other Development fields were retained.`;
+      document.getElementById('endorsement-serial').focus();
+    } else {
+      // Modal intentionally stays open so the operator can scan the next unit.
+      resetEndorsementForm(false);
+      setEndorsementFailureMode(failMode, false);
+      document.getElementById('endorsement-text-display').textContent =
+        `✓ Serial ${serial} endorsed to FA successfully.\n\nScan the next serial number, or click ✕ / Exit to close this window.`;
+      document.getElementById('endorsement-serial').focus();
+    }
   } else {
     err.textContent = json.error || 'Failed to endorse to FA.';
   }
